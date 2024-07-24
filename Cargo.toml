@@ -1,4 +1,4 @@
 [workspace]
 resolver = "2"
 
-members = ["libshizen", "shizen-cli"]
+members = ["libshizen", "shizen-cli", "shizen-dioxus"]
