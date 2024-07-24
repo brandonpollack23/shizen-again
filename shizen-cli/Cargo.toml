@@ -4,4 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap = { version = "4.5.10", features = ["unstable-doc", "derive"] }
 libshizen = { path = "../libshizen" }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
