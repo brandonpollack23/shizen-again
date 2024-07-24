@@ -3551,6 +3551,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "libshizen",
+ "thiserror",
  "tracing",
  "tracing-subscriber",
 ]

@@ -1,10 +1,18 @@
+use rusqlite::Connection;
+
+use crate::ShizenResult;
+
 use super::TodoStorage;
 
-struct RusqliteStorage {}
+struct RusqliteStorage {
+  conn: Connection,
+}
 
 impl RusqliteStorage {
-  pub fn new() -> RusqliteStorage {
-    RusqliteStorage {}
+  pub fn new(db_path: std::path::PathBuf) -> ShizenResult<RusqliteStorage> {
+    let conn = Connection::open(db_path)?;
+    // TODO setup schema and versioning/migrations. https://chatgpt.com/share/06f0d605-0b3c-45b1-b0ab-5723628e9574
+    Ok(RusqliteStorage { conn })
   }
 }
 
