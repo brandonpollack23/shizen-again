@@ -1,7 +1,5 @@
-#![allow(non_snake_case)]
-
 use dioxus::prelude::*;
-use shizen_dioxus_core::*;
+use shizen_dioxus_core::App;
 use tracing::Level;
 
 fn main() {
