@@ -346,6 +346,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shizen-cli"
+version = "0.1.0"
+dependencies = [
+ "libshizen",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
