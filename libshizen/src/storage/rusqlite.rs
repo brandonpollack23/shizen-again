@@ -2,7 +2,7 @@
 use std::iter;
 use std::str::FromStr;
 
-use rusqlite::{Connection, Row};
+use rusqlite::{Connection, Row, ToSql};
 use tracing::{error, info, trace};
 use uuid::Uuid;
 
@@ -240,18 +240,21 @@ FROM Notes
     let txn = self.conn.transaction()?;
 
     {
-      // TODO also remove from children table
       let mut stmt = txn.prepare(&Self::get_all_descendents_cte(
         r#"
-DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy)
+DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);
+DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);
 "#,
       ))?;
 
       stmt.query([note_id.0.to_string()])?;
     }
 
-    // TODO also remove from children table
     txn.execute("DELETE FROM Notes WHERE uuid = ?", [note_id.0.to_string()])?;
+    txn.execute(
+      "DELETE FROM Children WHERE child = ?1 OR parent = ?1",
+      [note_id.0.to_string()],
+    )?;
 
     txn.commit()?;
 
@@ -377,6 +380,8 @@ mod test {
       .unwrap();
 
     s.delete_note(&picard_note.id).unwrap();
+
+    assert_eq!(s.get_all_descendents(&picard_note.id).unwrap().len(), 0);
 
     assert!(matches!(
       s.load_note(&picard_note.id),
