@@ -242,8 +242,8 @@ FROM Notes
     {
       let mut stmt = txn.prepare(&Self::get_all_descendents_cte(
         r#"
-DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);
 DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);
+DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);
 "#,
       ))?;
 
@@ -382,6 +382,7 @@ mod test {
     s.delete_note(&picard_note.id).unwrap();
 
     assert_eq!(s.get_all_descendents(&picard_note.id).unwrap().len(), 0);
+    assert_eq!(s.load_all_notes().unwrap().len(), 0);
 
     assert!(matches!(
       s.load_note(&picard_note.id),
