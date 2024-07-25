@@ -1,4 +1,5 @@
 //! Sqlite storage engine using rusqlite.
+use std::iter;
 use std::str::FromStr;
 
 use rusqlite::{Connection, Row};
@@ -87,9 +88,8 @@ SELECT
     )
   }
 
-  fn get_all_descendents(conn: &Connection, note_id: &NoteId) -> ShizenResult<Vec<Note>> {
-    // Check if you can traverse upward from descenent to parent.
-    let mut stmt = conn.prepare(
+  fn get_all_descendents_cte(stmt: &str) -> String {
+    format!(
       r#"
 WITH RECURSIVE NoteHeirarchy AS (
   SELECT
@@ -104,6 +104,16 @@ WITH RECURSIVE NoteHeirarchy AS (
   FROM Children AS c
   INNER JOIN NoteHeirarchy AS curr ON c.parent = curr.child
 )
+{}
+"#,
+      stmt
+    )
+  }
+
+  fn get_all_descendents(conn: &Connection, note_id: &NoteId) -> ShizenResult<Vec<Note>> {
+    // Check if you can traverse upward from descenent to parent.
+    let mut stmt = conn.prepare(&Self::get_all_descendents_cte(
+      &r#"
 SELECT 
   n.uuid,
   n.title,
@@ -112,10 +122,10 @@ SELECT
 FROM NoteHeirarchy as nh
 INNER JOIN Notes AS n ON nh.child = n.uuid
 "#,
-    )?;
+    ))?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_and_then((), Self::row_to_note)?
+      .query_and_then([note_id.0.to_string()], Self::row_to_note)?
       .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 
@@ -141,16 +151,16 @@ impl TodoStorage for RusqliteStorage {
   fn create_new_note(
     &mut self, title: &str, description: Option<&str>, parent_id: Option<NoteId>,
   ) -> ShizenResult<Note> {
-    let tx = self.conn.transaction()?;
+    let txn = self.conn.transaction()?;
 
     if let Some(ref pid) = parent_id {
-      if !Self::note_exists_conn(&tx, &pid)? {
+      if !Self::note_exists_conn(&txn, &pid)? {
         return Err(ShizenError::NoSuchNote(pid.clone()));
       }
     }
 
     let uuid = Uuid::new_v4();
-    tx.execute(
+    txn.execute(
       "INSERT INTO Notes (uuid, title, description, parent_id) VALUES (?, ?, ?, ?)",
       (
         uuid.to_string(),
@@ -162,7 +172,7 @@ impl TodoStorage for RusqliteStorage {
 
     if let Some(ref p) = parent_id {
       trace!("Adding parent to new note: {parent_id:?}");
-      let i = tx.execute(
+      let i = txn.execute(
         "INSERT INTO Children (parent, child) VALUES (?, ?)",
         (p.0.to_string(), uuid.to_string()),
       )?;
@@ -171,7 +181,7 @@ impl TodoStorage for RusqliteStorage {
       }
     }
 
-    tx.commit()?;
+    txn.commit()?;
 
     Ok(Note {
       id: NoteId(uuid),
@@ -226,47 +236,22 @@ FROM Notes
     Self::get_all_descendents(&self.conn, note_id)
   }
 
-  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<usize> {
+  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
     let txn = self.conn.transaction()?;
-    let num_to_delete = txn.query_row(
-      r#"
-SELECT count(child) FROM Children WHERE parent = ?
+
+    {
+      let mut stmt = txn.prepare(&Self::get_all_descendents_cte(
+        r#"
+DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy)
 "#,
-      [note_id.0.to_string()],
-      |r| r.get::<_, usize>(0),
-    )? + 1;
+      ))?;
 
-    let num_deleted = txn.execute(
-      "DELETE FROM Notes WHERE uuid = ? OR parent_id = ?",
-      [note_id.0.to_string(), note_id.0.to_string()],
-    )?;
-    let children_deleted = txn.execute(
-      "DELETE FROM Children WHERE parent = ?",
-      [note_id.0.to_string()],
-    )?;
-
-    if num_deleted != num_to_delete {
-      error!("Expected num_deleted to be {num_to_delete} but was {num_deleted}");
-      return Err(ShizenError::UnexpectedMutationResult(
-        num_to_delete,
-        num_deleted,
-      ));
-    }
-
-    if children_deleted != (num_to_delete - 1) {
-      error!(
-        "Expected children deleted to be {} but was {children_deleted}",
-        num_to_delete - 1
-      );
-      return Err(ShizenError::UnexpectedMutationResult(
-        num_to_delete - 1,
-        children_deleted,
-      ));
+      stmt.query([note_id.0.to_string()])?;
     }
 
     txn.commit()?;
 
-    Ok(num_to_delete)
+    Ok(())
   }
 }
 
@@ -356,7 +341,7 @@ mod test {
       )
       .unwrap();
 
-    assert_eq!(s.delete_note(&riker.id).unwrap(), 1);
+    s.delete_note(&riker.id).unwrap();
 
     assert!(matches!(
       s.load_note(&riker.id),
@@ -387,7 +372,12 @@ mod test {
       )
       .unwrap();
 
-    assert_eq!(s.delete_note(&picard_note.id).unwrap(), 3);
+    s.delete_note(&picard_note.id).unwrap();
+
+    assert!(matches!(
+      s.load_note(&picard_note.id),
+      Err(ShizenError::RusqliteError(_))
+    ));
 
     assert!(matches!(
       s.load_note(&riker.id),
