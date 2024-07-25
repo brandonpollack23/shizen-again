@@ -242,12 +242,12 @@ FROM Notes
     {
       let mut stmt = txn.prepare(&Self::get_all_descendents_cte(
         r#"
-DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);
 DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);
+DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);
 "#,
       ))?;
 
-      stmt.query([note_id.0.to_string()])?;
+      stmt.execute([note_id.0.to_string()])?;
     }
 
     txn.execute("DELETE FROM Notes WHERE uuid = ?", [note_id.0.to_string()])?;

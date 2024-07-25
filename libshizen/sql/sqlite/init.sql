@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS Notes (
 CREATE TABLE IF NOT EXISTS Children (
   parent TEXT NOT NULL,
   child TEXT NOT NULL
+  -- TODO
+  -- FOREIGN KEY(parent) REFERENCES Notes(uuid),
+  -- FOREIGN KEY(child) REFERENCES Notes(uuid)
 );
 CREATE INDEX IF NOT EXISTS ParentToChildIndex
 ON Children (parent)
