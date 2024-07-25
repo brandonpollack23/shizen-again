@@ -239,16 +239,14 @@ FROM Notes
   fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
     let txn = self.conn.transaction()?;
 
-    {
-      let mut stmt = txn.prepare(&Self::get_all_descendents_cte(
+    txn
+      .prepare(&Self::get_all_descendents_cte(
         r#"
-DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);
-DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);
-"#,
-      ))?;
-
-      stmt.execute([note_id.0.to_string()])?;
-    }
+          DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);
+          DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);
+          "#,
+      ))?
+      .execute([note_id.0.to_string()])?;
 
     txn.execute("DELETE FROM Notes WHERE uuid = ?", [note_id.0.to_string()])?;
     txn.execute(
