@@ -12,7 +12,9 @@ pub trait TodoStorage {
     &self, title: &str, description: Option<&str>, parent: Option<NoteId>,
   ) -> ShizenResult<Note>;
   // Read
-  fn load_all_notes(&self) -> ShizenResult<()>;
+  fn load_all_notes(&self) -> ShizenResult<Vec<Note>>;
+  fn load_note(&self) -> ShizenResult<Note>;
+  fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool>;
   // Update
   // TODO
 

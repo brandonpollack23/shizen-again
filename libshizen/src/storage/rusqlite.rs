@@ -43,7 +43,11 @@ impl TodoStorage for RusqliteStorage {
   fn create_new_note(
     &self, title: &str, description: Option<&str>, parent_id: Option<NoteId>,
   ) -> ShizenResult<Note> {
-    // TODO verify parent exists and other cases/tests
+    if let Some(ref pid) = parent_id {
+      if !self.note_exists(&pid)? {
+        return Err(ShizenError::NoSuchNote(pid.clone()));
+      }
+    }
 
     let note_id = Uuid::new_v4();
     self.conn.execute(
@@ -59,8 +63,40 @@ impl TodoStorage for RusqliteStorage {
     })
   }
 
-  fn load_all_notes(&self) -> crate::ShizenResult<()> {
+  fn load_all_notes(&self) -> ShizenResult<Vec<Note>> {
+    let mut stmt = self.conn.prepare(
+      r#"
+SELECT 
+  id, title, description, parent_id 
+FROM Notes
+"#,
+    )?;
+
+    let result: ShizenResult<Vec<_>> = stmt
+      .query_map((), |r| {
+        Ok(Note {
+          id: NoteId(r.get(0)?),
+          title: r.get(1)?,
+          description: r.get(2)?,
+          parent_id: r.get::<_, Option<_>>(3)?.map(|p| NoteId(p)),
+        })
+      })?
+      .map(|v| v.map_err(Into::into))
+      .collect();
+
+    result
+  }
+
+  fn load_note(&self) -> ShizenResult<Note> {
     todo!()
+  }
+
+  fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool> {
+    Ok(self.conn.query_row(
+      "SELECT count(id) FROM Notes where id = ?",
+      [note_id.0],
+      |r| r.get::<_, bool>(0),
+    )?)
   }
 
   fn delete_note(&self) -> crate::ShizenResult<()> {
@@ -107,17 +143,29 @@ fn get_schema_version(conn: &Connection) -> Result<usize, ShizenError> {
 
 #[cfg(test)]
 mod test {
-  use tracing_subscriber::fmt::try_init;
+  use tracing_test::traced_test;
 
   use super::*;
 
-  fn init_tracing() {
-    tracing_subscriber::fmt::init();
+  #[test]
+  #[traced_test]
+  fn database_init() {
+    RusqliteStorage::new(None).unwrap();
   }
 
   #[test]
-  fn database_init() {
-    init_tracing();
-    RusqliteStorage::new(None).unwrap();
+  #[traced_test]
+  fn write_read_note() {
+    let s = RusqliteStorage::new(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+    let riker = s
+      .create_new_note(
+        "Riker",
+        "Number One of the enterprise".into(),
+        picard_note.parent_id.into(),
+      )
+      .unwrap();
   }
 }

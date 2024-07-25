@@ -1,6 +1,8 @@
 //! Result and error types for libshizen
 use thiserror::Error;
 
+use crate::entities::NoteId;
+
 pub type ShizenResult<T> = std::result::Result<T, ShizenError>;
 
 // TODO thiserror
@@ -10,4 +12,6 @@ pub enum ShizenError {
   RusqliteError(#[from] rusqlite::Error),
   #[error("Error migrating database schema")]
   MigrationError(usize, rusqlite::Error),
+  #[error("No note with the id {:?}", .0)]
+  NoSuchNote(NoteId),
 }
