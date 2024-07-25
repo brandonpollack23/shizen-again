@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS SchemaVersion (
 INSERT INTO SchemaVersion
 VALUES (1, 1);
 
-CREATE TABLE IF NOT EXISTS Todos (
+CREATE TABLE IF NOT EXISTS Notes (
   uuid TEXT PRIMARY KEY,
   title TEXT,
   description TEXT,

@@ -1,3 +1,4 @@
+pub mod entities;
 mod result;
 pub mod storage;
 

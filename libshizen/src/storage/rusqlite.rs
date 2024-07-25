@@ -1,7 +1,9 @@
 //! Sqlite storage engine using rusqlite.
 use rusqlite::Connection;
 use tracing::info;
+use uuid::Uuid;
 
+use crate::entities::{Note, NoteId};
 use crate::storage::TodoStorage;
 use crate::{ShizenError, ShizenResult};
 
@@ -38,15 +40,30 @@ impl RusqliteStorage {
 }
 
 impl TodoStorage for RusqliteStorage {
-  fn create_new_note() -> crate::ShizenResult<()> {
+  fn create_new_note(
+    &self, title: &str, description: Option<&str>, parent_id: Option<NoteId>,
+  ) -> ShizenResult<Note> {
+    // TODO verify parent exists and other cases/tests
+
+    let note_id = Uuid::new_v4();
+    self.conn.execute(
+      "INSERT INTO Notes (uuid, title, description, parent_id) VALUES (?, ?, ?, ?)",
+      (note_id, title, description, parent_id.as_ref().map(|p| p.0)),
+    )?;
+
+    Ok(Note {
+      id: NoteId(note_id),
+      title: title.to_string(),
+      description: description.map(|s| s.to_string()),
+      parent_id,
+    })
+  }
+
+  fn load_all_notes(&self) -> crate::ShizenResult<()> {
     todo!()
   }
 
-  fn load_all_notes() -> crate::ShizenResult<()> {
-    todo!()
-  }
-
-  fn delete_note() -> crate::ShizenResult<()> {
+  fn delete_note(&self) -> crate::ShizenResult<()> {
     todo!()
   }
 }
