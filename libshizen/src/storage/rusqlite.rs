@@ -239,12 +239,15 @@ FROM Notes
   fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
     let txn = self.conn.transaction()?;
 
+    // TODO can i do this more efficently and not recalculate the CTE?
     txn
       .prepare(&Self::get_all_descendents_cte(
-        r#"
-          DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);
-          DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);
-          "#,
+        "DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);",
+      ))?
+      .execute([note_id.0.to_string()])?;
+    txn
+      .prepare(&Self::get_all_descendents_cte(
+        "DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);",
       ))?
       .execute([note_id.0.to_string()])?;
 
