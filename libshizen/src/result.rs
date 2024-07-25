@@ -6,7 +6,7 @@ use crate::entities::NoteId;
 pub type ShizenResult<T> = std::result::Result<T, ShizenError>;
 
 // TODO thiserror
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum ShizenError {
   #[error("Rusqlite internal error")]
   RusqliteError(#[from] rusqlite::Error),
@@ -14,4 +14,6 @@ pub enum ShizenError {
   MigrationError(usize, rusqlite::Error),
   #[error("No note with the id {:?}", .0)]
   NoSuchNote(NoteId),
+  #[error("Unexpected number of affected rows in db")]
+  UnexpectedMutationResult,
 }

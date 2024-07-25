@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Note {
   pub id: NoteId,
   pub title: String,
@@ -8,7 +8,7 @@ pub struct Note {
   pub parent_id: Option<NoteId>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NoteId(pub Uuid);
 
 #[derive(Debug, Clone)]

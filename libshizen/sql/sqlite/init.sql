@@ -13,3 +13,8 @@ CREATE TABLE IF NOT EXISTS Notes (
   description TEXT,
   parent_id TEXT
 );
+
+CREATE TABLE IF NOT EXISTS Children (
+  PARENT TEXT PRIMARY KEY,
+  CHILD TEXT,
+);
