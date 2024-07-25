@@ -1,8 +1,8 @@
 //! Sqlite storage engine using rusqlite.
 use std::str::FromStr;
 
-use rusqlite::Connection;
-use tracing::{error, info};
+use rusqlite::{Connection, Row};
+use tracing::{error, info, trace};
 use uuid::Uuid;
 
 use crate::entities::{Note, NoteId};
@@ -71,7 +71,7 @@ WITH RECURSIVE NoteHeirarchy AS (
     c.parent,
     c.child
   FROM Children AS c
-  INNER JOIN NoteHeirarchy AS nh ON nh.parent = c.child -- Where the parents we've collected are children of others.
+  INNER JOIN NoteHeirarchy AS nh ON nh.parent = c.child -- Where the parents of what we have are children themselves.
 )
 SELECT
   EXISTS(
@@ -80,7 +80,60 @@ SELECT
 "#,
     )?;
 
-    Ok(query.query_row((descendent.0, ancestor.0), |r| Ok(r.get(0)?))?)
+    Ok(
+      query.query_row((descendent.0.to_string(), ancestor.0.to_string()), |r| {
+        Ok(r.get(0)?)
+      })?,
+    )
+  }
+
+  fn get_all_descendents(conn: &Connection, note_id: &NoteId) -> ShizenResult<Vec<Note>> {
+    // Check if you can traverse upward from descenent to parent.
+    let mut stmt = conn.prepare(
+      r#"
+WITH RECURSIVE NoteHeirarchy AS (
+  SELECT
+    child
+  FROM Children
+  WHERE parent = ?1
+
+  UNION ALL
+
+  SELECT
+    c.child
+  FROM Children AS c
+  INNER JOIN NoteHeirarchy AS curr ON c.parent = curr.child
+)
+SELECT 
+  n.uuid,
+  n.title,
+  n.description,
+  n.parent_id
+FROM NoteHeirarchy as nh
+INNER JOIN Notes AS n ON nh.child = n.uuid
+"#,
+    )?;
+
+    let result: ShizenResult<Vec<_>> = stmt
+      .query_and_then((), Self::row_to_note)?
+      .map(|v: ShizenResult<_>| v.map_err(Into::into))
+      .collect();
+
+    result
+  }
+
+  fn row_to_note(r: &Row) -> ShizenResult<Note> {
+    let uuid = Uuid::parse_str(&r.get::<_, String>(0)?)?;
+    let parent_uuid = r
+      .get::<_, Option<String>>(3)?
+      .map(|p| Uuid::parse_str(&p))
+      .transpose()?;
+    Ok(Note {
+      id: NoteId(uuid),
+      title: r.get(1)?,
+      description: r.get(2)?,
+      parent_id: parent_uuid.map(NoteId),
+    })
   }
 }
 
@@ -88,8 +141,6 @@ impl TodoStorage for RusqliteStorage {
   fn create_new_note(
     &mut self, title: &str, description: Option<&str>, parent_id: Option<NoteId>,
   ) -> ShizenResult<Note> {
-    // TODO do not allow loops (check with WITH RECURSIVE CTE)
-
     let tx = self.conn.transaction()?;
 
     if let Some(ref pid) = parent_id {
@@ -110,10 +161,14 @@ impl TodoStorage for RusqliteStorage {
     )?;
 
     if let Some(ref p) = parent_id {
-      tx.execute(
+      trace!("Adding parent to new note: {parent_id:?}");
+      let i = tx.execute(
         "INSERT INTO Children (parent, child) VALUES (?, ?)",
         (p.0.to_string(), uuid.to_string()),
       )?;
+      if i != 1 {
+        return Err(ShizenError::UnexpectedMutationResult(1, i));
+      }
     }
 
     tx.commit()?;
@@ -136,19 +191,7 @@ FROM Notes
     )?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_and_then((), |r| {
-        let uuid = Uuid::parse_str(&r.get::<_, String>(0)?)?;
-        let parent_uuid = r
-          .get::<_, Option<String>>(3)?
-          .map(|p| Uuid::parse_str(&p))
-          .transpose()?;
-        Ok(Note {
-          id: NoteId(uuid),
-          title: r.get(1)?,
-          description: r.get(2)?,
-          parent_id: parent_uuid.map(NoteId),
-        })
-      })?
+      .query_and_then((), Self::row_to_note)?
       .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 
@@ -179,9 +222,11 @@ FROM Notes
     Self::note_exists_conn(&self.conn, note_id)
   }
 
-  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<usize> {
-    // TODO with recursive delete ALL children recursively.
+  fn get_all_descendents(&self, note_id: &NoteId) -> ShizenResult<Vec<Note>> {
+    Self::get_all_descendents(&self.conn, note_id)
+  }
 
+  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<usize> {
     let txn = self.conn.transaction()?;
     let num_to_delete = txn.query_row(
       r#"
@@ -224,8 +269,6 @@ SELECT count(child) FROM Children WHERE parent = ?
     Ok(num_to_delete)
   }
 }
-
-impl RusqliteStorage {}
 
 fn database_is_initialized(conn: &Connection) -> ShizenResult<bool> {
   Ok(conn.query_row(&check_initialized_str(), (), |row| Ok(row.get(0)?))?)
@@ -375,10 +418,18 @@ mod test {
       .create_new_note("Worf", "Chief of security".into(), riker.id.clone().into())
       .unwrap();
 
-    info!("{:#?}", s.load_all_notes().unwrap());
+    trace!("{:#?}", s.load_all_notes().unwrap());
 
     assert_eq!(
       RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &riker.id).unwrap(),
+      true
+    );
+    assert_eq!(
+      RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &worf.id).unwrap(),
+      true
+    );
+    assert_eq!(
+      RusqliteStorage::is_descendent_of(&s.conn, &riker.id, &worf.id).unwrap(),
       true
     );
   }
