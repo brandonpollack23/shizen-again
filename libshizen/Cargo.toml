@@ -6,3 +6,8 @@ edition = "2021"
 [dependencies]
 rusqlite = { version = "0.32.0", features = ["bundled-full"] }
 thiserror = "1.0.63"
+tracing = "0.1.40"
+uuid = {version = "1.10.0", features = ["v4", "fast-rng"]}
+
+[dev-dependencies]
+tracing-subscriber = "0.3.18"
