@@ -1,8 +1,8 @@
 -- Initializes all the tables required for shizen.
 
 CREATE TABLE IF NOT EXISTS SchemaVersion (
-  ID INTEGER PRIMARY KEY CHECK(ID = 1),
-  VERSION INTEGER
+  id INTEGER PRIMARY KEY CHECK(ID = 1),
+  version INTEGER
 );
 INSERT INTO SchemaVersion
 VALUES (1, 1);

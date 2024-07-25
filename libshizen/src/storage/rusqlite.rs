@@ -1,4 +1,6 @@
 //! Sqlite storage engine using rusqlite.
+use std::str::FromStr;
+
 use rusqlite::Connection;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -26,11 +28,10 @@ impl RusqliteStorage {
     };
 
     // DB configuration sane defaults.
-    // conn.execute("PRAGMA journal_mode = WAL;", ())?;
-    // conn.execute("PRAGMA synchronous = NORMAL;", ())?;
-    // conn.execute("PRAGMA foreign_keys = ON;", ())?;
+    conn.query_row("PRAGMA journal_mode = WAL", (), |_| Ok(()))?;
+    conn.execute("PRAGMA synchronous = NORMAL", ())?;
+    conn.execute("PRAGMA foreign_keys = ON", ())?;
 
-    // TODO setup schema and versioning/migrations. https://chatgpt.com/share/06f0d605-0b3c-45b1-b0ab-5723628e9574
     if !database_is_initialized(&conn)? {
       info!("Initializing database...");
       conn.execute_batch(&libshizen_sql_init_str())?;
@@ -41,6 +42,45 @@ impl RusqliteStorage {
     info!("Database running at version {}", get_schema_version(&conn)?);
 
     Ok(RusqliteStorage { conn })
+  }
+
+  fn note_exists_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<bool> {
+    Ok(conn.query_row(
+      "SELECT count(uuid) FROM Notes where uuid = ?",
+      [note_id.0.to_string()],
+      |r| r.get::<_, bool>(0),
+    )?)
+  }
+
+  fn is_descendent_of(
+    conn: &Connection, ancestor: &NoteId, descendent: &NoteId,
+  ) -> ShizenResult<bool> {
+    // Check if you can traverse upward from descenent to parent.
+    let mut query = conn.prepare(
+      r#"
+WITH RECURSIVE NoteHeirarchy AS (
+  SELECT
+    parent,
+    child
+  FROM Children
+  WHERE child = ?1 -- descendent start
+
+  UNION ALL
+
+  SELECT
+    c.parent,
+    c.child
+  FROM Children AS c
+  INNER JOIN NoteHeirarchy AS nh ON nh.parent = c.child -- Where the parents we've collected are children of others.
+)
+SELECT
+  EXISTS(
+    SELECT 1 FROM NoteHeirarchy WHERE parent = ?2 -- Ancestor
+  );
+"#,
+    )?;
+
+    Ok(query.query_row((descendent.0, ancestor.0), |r| Ok(r.get(0)?))?)
   }
 }
 
@@ -61,13 +101,18 @@ impl TodoStorage for RusqliteStorage {
     let uuid = Uuid::new_v4();
     tx.execute(
       "INSERT INTO Notes (uuid, title, description, parent_id) VALUES (?, ?, ?, ?)",
-      (uuid, title, description, parent_id.as_ref().map(|p| p.0)),
+      (
+        uuid.to_string(),
+        title,
+        description,
+        parent_id.as_ref().map(|p| p.0.to_string()),
+      ),
     )?;
 
     if let Some(ref p) = parent_id {
       tx.execute(
         "INSERT INTO Children (parent, child) VALUES (?, ?)",
-        (p.0, uuid),
+        (p.0.to_string(), uuid.to_string()),
       )?;
     }
 
@@ -91,15 +136,20 @@ FROM Notes
     )?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_map((), |r| {
+      .query_and_then((), |r| {
+        let uuid = Uuid::parse_str(&r.get::<_, String>(0)?)?;
+        let parent_uuid = r
+          .get::<_, Option<String>>(3)?
+          .map(|p| Uuid::parse_str(&p))
+          .transpose()?;
         Ok(Note {
-          id: NoteId(r.get(0)?),
+          id: NoteId(uuid),
           title: r.get(1)?,
           description: r.get(2)?,
-          parent_id: r.get::<_, Option<_>>(3)?.map(|p| NoteId(p)),
+          parent_id: parent_uuid.map(NoteId),
         })
       })?
-      .map(|v| v.map_err(Into::into))
+      .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 
     result
@@ -113,7 +163,7 @@ FROM Notes
   FROM Notes
   WHERE uuid = ?
 "#,
-      [note_id.0],
+      [note_id.0.to_string()],
       |r| {
         Ok(Note {
           id: note_id.clone(),
@@ -137,15 +187,18 @@ FROM Notes
       r#"
 SELECT count(child) FROM Children WHERE parent = ?
 "#,
-      [note_id.0],
+      [note_id.0.to_string()],
       |r| r.get::<_, usize>(0),
     )? + 1;
 
     let num_deleted = txn.execute(
       "DELETE FROM Notes WHERE uuid = ? OR parent_id = ?",
-      [note_id.0, note_id.0],
+      [note_id.0.to_string(), note_id.0.to_string()],
     )?;
-    let children_deleted = txn.execute("DELETE FROM Children WHERE parent = ?", [note_id.0])?;
+    let children_deleted = txn.execute(
+      "DELETE FROM Children WHERE parent = ?",
+      [note_id.0.to_string()],
+    )?;
 
     if num_deleted != num_to_delete {
       error!("Expected num_deleted to be {num_to_delete} but was {num_deleted}");
@@ -172,15 +225,7 @@ SELECT count(child) FROM Children WHERE parent = ?
   }
 }
 
-impl RusqliteStorage {
-  fn note_exists_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<bool> {
-    Ok(conn.query_row(
-      "SELECT count(uuid) FROM Notes where uuid = ?",
-      [note_id.0],
-      |r| r.get::<_, bool>(0),
-    )?)
-  }
-}
+impl RusqliteStorage {}
 
 fn database_is_initialized(conn: &Connection) -> ShizenResult<bool> {
   Ok(conn.query_row(&check_initialized_str(), (), |row| Ok(row.get(0)?))?)
@@ -310,5 +355,31 @@ mod test {
       s.load_note(&worf.id),
       Err(ShizenError::RusqliteError(_))
     ));
+  }
+
+  #[test]
+  #[traced_test]
+  fn is_descendent_of() {
+    let mut s = RusqliteStorage::new(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+    let riker = s
+      .create_new_note(
+        "Riker",
+        "Number One of the enterprise".into(),
+        picard_note.id.clone().into(),
+      )
+      .unwrap();
+    let worf = s
+      .create_new_note("Worf", "Chief of security".into(), riker.id.clone().into())
+      .unwrap();
+
+    info!("{:#?}", s.load_all_notes().unwrap());
+
+    assert_eq!(
+      RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &riker.id).unwrap(),
+      true
+    );
   }
 }

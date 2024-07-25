@@ -10,6 +10,8 @@ pub type ShizenResult<T> = std::result::Result<T, ShizenError>;
 pub enum ShizenError {
   #[error("Rusqlite internal error")]
   RusqliteError(#[from] rusqlite::Error),
+  #[error("Error processing UUID")]
+  UuidError(#[from] uuid::Error),
   #[error("Error migrating database schema")]
   MigrationError(usize, rusqlite::Error),
   #[error("No note with the id {:?}", .0)]
