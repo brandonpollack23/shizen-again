@@ -9,12 +9,14 @@ VALUES (1, 1);
 
 CREATE TABLE IF NOT EXISTS Notes (
   uuid TEXT PRIMARY KEY,
-  title TEXT,
+  title TEXT NOT NULL,
   description TEXT,
   parent_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS Children (
-  PARENT TEXT PRIMARY KEY,
-  CHILD TEXT,
+  parent TEXT NOT NULL,
+  child TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS ParentToChildIndex
+ON Children (parent)

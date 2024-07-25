@@ -14,6 +14,6 @@ pub enum ShizenError {
   MigrationError(usize, rusqlite::Error),
   #[error("No note with the id {:?}", .0)]
   NoSuchNote(NoteId),
-  #[error("Unexpected number of affected rows in db")]
-  UnexpectedMutationResult,
+  #[error("Unexpected number of affected rows in db: expected {}, got {}", .0, .1)]
+  UnexpectedMutationResult(usize, usize),
 }

@@ -1,6 +1,6 @@
 //! Sqlite storage engine using rusqlite.
 use rusqlite::Connection;
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::entities::{Note, NoteId};
@@ -25,6 +25,11 @@ impl RusqliteStorage {
       Connection::open_in_memory()?
     };
 
+    // DB configuration sane defaults.
+    // conn.execute("PRAGMA journal_mode = WAL;", ())?;
+    // conn.execute("PRAGMA synchronous = NORMAL;", ())?;
+    // conn.execute("PRAGMA foreign_keys = ON;", ())?;
+
     // TODO setup schema and versioning/migrations. https://chatgpt.com/share/06f0d605-0b3c-45b1-b0ab-5723628e9574
     if !database_is_initialized(&conn)? {
       info!("Initializing database...");
@@ -41,22 +46,35 @@ impl RusqliteStorage {
 
 impl TodoStorage for RusqliteStorage {
   fn create_new_note(
-    &self, title: &str, description: Option<&str>, parent_id: Option<NoteId>,
+    &mut self, title: &str, description: Option<&str>, parent_id: Option<NoteId>,
   ) -> ShizenResult<Note> {
+    // TODO do not allow loops (check with WITH RECURSIVE CTE)
+
+    let tx = self.conn.transaction()?;
+
     if let Some(ref pid) = parent_id {
-      if !self.note_exists(&pid)? {
+      if !Self::note_exists_conn(&tx, &pid)? {
         return Err(ShizenError::NoSuchNote(pid.clone()));
       }
     }
 
-    let note_id = Uuid::new_v4();
-    self.conn.execute(
+    let uuid = Uuid::new_v4();
+    tx.execute(
       "INSERT INTO Notes (uuid, title, description, parent_id) VALUES (?, ?, ?, ?)",
-      (note_id, title, description, parent_id.as_ref().map(|p| p.0)),
+      (uuid, title, description, parent_id.as_ref().map(|p| p.0)),
     )?;
 
+    if let Some(ref p) = parent_id {
+      tx.execute(
+        "INSERT INTO Children (parent, child) VALUES (?, ?)",
+        (p.0, uuid),
+      )?;
+    }
+
+    tx.commit()?;
+
     Ok(Note {
-      id: NoteId(note_id),
+      id: NoteId(uuid),
       title: title.to_string(),
       description: description.map(|s| s.to_string()),
       parent_id,
@@ -108,26 +126,59 @@ FROM Notes
   }
 
   fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool> {
-    Ok(self.conn.query_row(
+    Self::note_exists_conn(&self.conn, note_id)
+  }
+
+  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<usize> {
+    // TODO with recursive delete ALL children recursively.
+
+    let txn = self.conn.transaction()?;
+    let num_to_delete = txn.query_row(
+      r#"
+SELECT count(child) FROM Children WHERE parent = ?
+"#,
+      [note_id.0],
+      |r| r.get::<_, usize>(0),
+    )? + 1;
+
+    let num_deleted = txn.execute(
+      "DELETE FROM Notes WHERE uuid = ? OR parent_id = ?",
+      [note_id.0, note_id.0],
+    )?;
+    let children_deleted = txn.execute("DELETE FROM Children WHERE parent = ?", [note_id.0])?;
+
+    if num_deleted != num_to_delete {
+      error!("Expected num_deleted to be {num_to_delete} but was {num_deleted}");
+      return Err(ShizenError::UnexpectedMutationResult(
+        num_to_delete,
+        num_deleted,
+      ));
+    }
+
+    if children_deleted != (num_to_delete - 1) {
+      error!(
+        "Expected children deleted to be {} but was {children_deleted}",
+        num_to_delete - 1
+      );
+      return Err(ShizenError::UnexpectedMutationResult(
+        num_to_delete - 1,
+        children_deleted,
+      ));
+    }
+
+    txn.commit()?;
+
+    Ok(num_to_delete)
+  }
+}
+
+impl RusqliteStorage {
+  fn note_exists_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<bool> {
+    Ok(conn.query_row(
       "SELECT count(uuid) FROM Notes where uuid = ?",
       [note_id.0],
       |r| r.get::<_, bool>(0),
     )?)
-  }
-
-  fn delete_note(&self, note_id: &NoteId) -> ShizenResult<()> {
-    // TODO children table, if parent deleted delete children.
-    // When note deleted remove parent->child relation from table.
-    // When adding note make sure to also add to children table.
-    let num_deleted = self
-      .conn
-      .execute("DELETE FROM Notes WHERE uuid = ?", [note_id.0])?;
-
-    if num_deleted != 1 {
-      return Err(ShizenError::UnexpectedMutationResult);
-    }
-
-    Ok(())
   }
 }
 
@@ -184,10 +235,12 @@ mod test {
   #[test]
   #[traced_test]
   fn write_read_note() {
-    let s = RusqliteStorage::new(None).unwrap();
+    let mut s = RusqliteStorage::new(None).unwrap();
+
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
+
     let riker = s
       .create_new_note(
         "Riker",
@@ -203,7 +256,7 @@ mod test {
   #[test]
   #[traced_test]
   fn delete_note() {
-    let s = RusqliteStorage::new(None).unwrap();
+    let mut s = RusqliteStorage::new(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -215,10 +268,46 @@ mod test {
       )
       .unwrap();
 
-    s.delete_note(&riker.id).unwrap();
+    assert_eq!(s.delete_note(&riker.id).unwrap(), 1);
 
     assert!(matches!(
       s.load_note(&riker.id),
+      Err(ShizenError::RusqliteError(_))
+    ));
+  }
+
+  #[test]
+  #[traced_test]
+  fn delete_note_with_children() {
+    let mut s = RusqliteStorage::new(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+    let riker = s
+      .create_new_note(
+        "Riker",
+        "Number One of the enterprise".into(),
+        picard_note.id.clone().into(),
+      )
+      .unwrap();
+
+    let worf = s
+      .create_new_note(
+        "Worf",
+        "Chief of security".into(),
+        picard_note.id.clone().into(),
+      )
+      .unwrap();
+
+    assert_eq!(s.delete_note(&picard_note.id).unwrap(), 3);
+
+    assert!(matches!(
+      s.load_note(&riker.id),
+      Err(ShizenError::RusqliteError(_))
+    ));
+
+    assert!(matches!(
+      s.load_note(&worf.id),
       Err(ShizenError::RusqliteError(_))
     ));
   }
