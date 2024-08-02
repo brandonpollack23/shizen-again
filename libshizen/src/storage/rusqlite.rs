@@ -1,16 +1,13 @@
 //! Sqlite storage engine using rusqlite.
-use std::iter;
-use std::str::FromStr;
-
 use rusqlite::{Connection, Row, ToSql};
-use tracing::{error, info, trace};
+use tracing::{info, trace};
 use uuid::Uuid;
 
 use crate::entities::{Note, NoteId};
 use crate::storage::TodoStorage;
 use crate::{ShizenError, ShizenResult};
 
-struct RusqliteStorage {
+pub struct RusqliteStorage {
   conn: Connection,
 }
 
