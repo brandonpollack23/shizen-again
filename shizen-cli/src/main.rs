@@ -19,9 +19,17 @@ struct Cli {
 #[command(arg_required_else_help(true))]
 enum Commands {
   /// List notes/todos.
+  #[command(alias = "cr")]
   Create,
+  #[command(alias = "ls")]
   List,
+  #[command(alias = "a")]
   Add(AddArguments),
+  #[command(alias = "rm")]
+  Remove {
+    /// Parsable UUID of parent note.
+    uuid: String,
+  },
 }
 
 #[derive(Args, Debug, PartialEq, Eq)]
@@ -69,7 +77,16 @@ fn main() {
         .parent_id
         .map(|p| Uuid::parse_str(&p).expect("invalid parent uuid"))
         .map(NoteId);
-      database.create_new_note(&args.title, args.description.as_deref(), parent_id.as_ref()).expect("could not add note");
+      let added_note = database
+        .create_new_note(&args.title, args.description.as_deref(), parent_id.as_ref())
+        .expect("could not add note");
+      println!("Note added:\n\n{:#?}", added_note);
+    }
+    Commands::Remove { uuid } => {
+      let uuid = Uuid::parse_str(&uuid).expect("Could not parse UUID");
+      database
+        .delete_note(&NoteId(uuid))
+        .expect("Could not delete note");
     }
   }
 }
