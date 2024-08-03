@@ -7,6 +7,8 @@ use crate::entities::{Note, NoteId};
 use crate::storage::TodoStorage;
 use crate::{ShizenError, ShizenResult};
 
+// TODO remove parent field from Notes table and replace with a join to children table.
+
 pub struct RusqliteStorage {
   conn: Connection,
 }
@@ -102,6 +104,37 @@ SELECT
         r.get(0)
       })?,
     )
+  }
+
+  fn note_blocks_other_note(
+    conn: &Connection, blocker: &NoteId, blockee: &NoteId,
+  ) -> ShizenResult<bool> {
+    // Check if you can traverse upward from descenent to parent.
+    let mut query = conn.prepare(
+      r#"
+WITH RECURSIVE NoteHeirarchy AS (
+  SELECT
+    blocker,
+    blockee
+  FROM Dependencies
+  WHERE blocker = ?1 -- dependency start
+
+  UNION ALL
+
+  SELECT
+    d.blocker,
+    d.blockee
+  FROM Dependencies AS d
+  INNER JOIN NoteHeirarchy AS nh ON nh.blockee = d.blocker -- Where the blocked notes are blockers for other notes.
+)
+SELECT
+  EXISTS(
+    SELECT 1 FROM NoteHeirarchy WHERE blockee = ?2 -- blockee
+  );
+"#,
+    )?;
+
+    Ok(query.query_row((blocker.0.to_string(), blockee.0.to_string()), |r| r.get(0))?)
   }
 
   fn get_all_descendents_cte(stmt: &str) -> String {
@@ -284,7 +317,7 @@ FROM Notes
     Ok(())
   }
 
-  fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
+  fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
     self.conn.execute(
       r#"UPDATE Notes SET title = "?" WHERE id = ?"#,
       [title, &note_id.0.to_string()],
@@ -293,7 +326,9 @@ FROM Notes
     Ok(())
   }
 
-  fn update_description(&self, note_id: &NoteId, description: Option<&str>) -> ShizenResult<()> {
+  fn update_description(
+    &mut self, note_id: &NoteId, description: Option<&str>,
+  ) -> ShizenResult<()> {
     if description.is_none() {
       self.conn.execute(
         r#"UPDATE Notes SET description = NULL WHERE id = ?"#,
@@ -311,12 +346,77 @@ FROM Notes
     Ok(())
   }
 
-  fn update_parent(&self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()> {
-    todo!("verify parent doesnt make loop and parent exists then set it")
+  fn update_parent(&mut self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()> {
+    let mut txn = self.conn.transaction()?;
+
+    if !Self::note_exists_conn(&txn, note_id)? {
+      return Err(ShizenError::NoSuchNote(note_id.clone()));
+    }
+
+    if parent.is_none() {
+      txn.execute(
+        r#"UPDATE Notes SET parent = NULL WHERE id = ?"#,
+        [&note_id.0.to_string()],
+      )?;
+      txn.execute(
+        "DELETE FROM Children WHERE child = ?",
+        [note_id.0.to_string()],
+      )?;
+
+      return Ok(());
+    }
+
+    if !Self::note_exists_conn(&txn, parent.unwrap())? {
+      return Err(ShizenError::NoSuchNote(parent.unwrap().clone()));
+    }
+
+    todo!("verify parenting doesnt make loop then set it");
+
+    txn.commit()?;
+    Ok(())
   }
 
-  fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
-    todo!("verify dependency doesnt make loop and both notes exists then set it")
+  fn add_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
+    let mut txn = self.conn.transaction()?;
+
+    if !Self::note_exists_conn(&txn, note_id)? {
+      return Err(ShizenError::NoSuchNote(note_id.clone()));
+    }
+
+    if !Self::note_exists_conn(&txn, blocked_note)? {
+      return Err(ShizenError::NoSuchNote(blocked_note.clone()));
+    }
+
+    if Self::note_blocks_other_note(&txn, blocked_note, note_id)? {
+      // This would create a circular dependency.
+      return Err(ShizenError::DependencyCircularReference(
+        note_id.clone(),
+        blocked_note.clone(),
+      ));
+    }
+
+    // TODO add the dep
+    todo!("verify dependency doesnt make loop and both notes exists then set it");
+
+    txn.commit()?;
+    Ok(())
+  }
+
+  fn remove_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
+    let mut txn = self.conn.transaction()?;
+
+    if !Self::note_exists_conn(&txn, note_id)? {
+      return Err(ShizenError::NoSuchNote(note_id.clone()));
+    }
+
+    if !Self::note_exists_conn(&txn, blocked_note)? {
+      return Err(ShizenError::NoSuchNote(blocked_note.clone()));
+    }
+
+    todo!("verify there is such a dependency and then remove it");
+
+    txn.commit()?;
+    Ok(())
   }
 }
 
@@ -484,4 +584,5 @@ mod test {
   // TODO update title
   // TODO update desc and to null
   // TODO Add deps
+  // TODO rmove deps
 }

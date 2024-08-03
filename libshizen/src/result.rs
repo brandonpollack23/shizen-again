@@ -22,4 +22,10 @@ pub enum ShizenError {
   NoSuchNote(NoteId),
   #[error("Unexpected number of affected rows in db: expected {}, got {}", .0, .1)]
   UnexpectedMutationResult(usize, usize),
+  #[error("Circular reference would be created by parenting {} to {}", .1, .0)]
+  /// Parent (0) -> Child (0)
+  ParentCircularReference(NoteId, NoteId),
+  #[error("Circular reference would be created by making {} block {}", .0, .1)]
+  /// Blocker (0) -> Blockee (0)
+  DependencyCircularReference(NoteId, NoteId),
 }

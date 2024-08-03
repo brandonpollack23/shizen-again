@@ -17,12 +17,15 @@ pub trait TodoStorage {
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note>;
   fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool>;
   fn get_all_descendents(&self, note_id: &NoteId) -> ShizenResult<Vec<Note>>;
+  fn get_all_blocked(&self, note_id: &NoteId, recursive: bool) -> ShizenResult<Vec<Note>>;
 
   // Update
-  fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()>;
-  fn update_description(&self, note_id: &NoteId, description: Option<&str>) -> ShizenResult<()>;
-  fn update_parent(&self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()>;
-  fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
+  fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()>;
+  fn update_description(&mut self, note_id: &NoteId, description: Option<&str>)
+    -> ShizenResult<()>;
+  fn update_parent(&mut self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()>;
+  fn add_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
+  fn remove_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
 
   // Delete
   fn delete_note(&mut self, note_id: &NoteId) -> crate::ShizenResult<()>;

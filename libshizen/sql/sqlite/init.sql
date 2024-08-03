@@ -23,3 +23,15 @@ CREATE TABLE IF NOT EXISTS Children (
 );
 CREATE INDEX IF NOT EXISTS ParentToChildIndex
 ON Children (parent)
+
+CREATE TABLE IF NOT EXISTS Dependencies (
+  blocker TEXT NOT NULL,
+  blockee TEXT NOT NULL
+  -- TODO
+  -- FOREIGN KEY(parent) REFERENCES Notes(uuid),
+  -- FOREIGN KEY(child) REFERENCES Notes(uuid)
+);
+CREATE INDEX IF NOT EXISTS BlockerToBlockeeIndex
+ON Dependencies (blocker)
+CREATE INDEX IF NOT EXISTS BlockeeToBlockerIndex
+ON Dependencies (blockee)
