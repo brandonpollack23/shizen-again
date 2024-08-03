@@ -30,6 +30,8 @@ enum Commands {
     /// Parsable UUID of parent note.
     uuid: String,
   },
+  // TODO update title/desc/parent notes
+  // TODO update dependencies
 }
 
 #[derive(Args, Debug, PartialEq, Eq)]
