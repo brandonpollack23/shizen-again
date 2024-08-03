@@ -1,5 +1,5 @@
 //! Sqlite storage engine using rusqlite.
-use rusqlite::{Connection, Row, ToSql};
+use rusqlite::{Connection, Row};
 use tracing::{info, trace};
 use uuid::Uuid;
 
@@ -12,15 +12,34 @@ pub struct RusqliteStorage {
 }
 
 impl RusqliteStorage {
-  pub fn new(db_path: Option<std::path::PathBuf>) -> ShizenResult<RusqliteStorage> {
-    if db_path == None {
+  pub fn create(db_path: &std::path::PathBuf) -> ShizenResult<()> {
+    if db_path.exists() {
+      return Err(ShizenError::ErrorCreatingDb(format!(
+        "Database file already exists: {}",
+        db_path.to_string_lossy().to_owned()
+      )));
+    }
+
+    Connection::open(db_path)?;
+    Ok(())
+  }
+
+  pub fn open(db_path: Option<&std::path::PathBuf>) -> ShizenResult<RusqliteStorage> {
+    if db_path.is_none() {
       info!("Opening sqlite database in memory");
     } else {
       info!("Opening sqlite database: {:?}", db_path.as_ref().unwrap());
     }
 
     let conn = if let Some(p) = db_path {
-      Connection::open(p)?
+      if !p.exists() {
+        return Err(ShizenError::ErrorOpeningDb(format!(
+          "No such file: {}",
+          p.to_string_lossy()
+        )));
+      }
+
+      Connection::open(p).map_err(|e| ShizenError::ErrorOpeningDb(format!("{:?}", e)))?
     } else {
       Connection::open_in_memory()?
     };
@@ -32,7 +51,7 @@ impl RusqliteStorage {
 
     if !database_is_initialized(&conn)? {
       info!("Initializing database...");
-      conn.execute_batch(&libshizen_sql_init_str())?;
+      conn.execute_batch(libshizen_sql_init_str())?;
     }
 
     run_schema_migrations(&conn)?;
@@ -80,7 +99,7 @@ SELECT
 
     Ok(
       query.query_row((descendent.0.to_string(), ancestor.0.to_string()), |r| {
-        Ok(r.get(0)?)
+        r.get(0)
       })?,
     )
   }
@@ -110,7 +129,7 @@ WITH RECURSIVE NoteHeirarchy AS (
   fn get_all_descendents(conn: &Connection, note_id: &NoteId) -> ShizenResult<Vec<Note>> {
     // Check if you can traverse upward from descenent to parent.
     let mut stmt = conn.prepare(&Self::get_all_descendents_cte(
-      &r#"
+      r#"
 SELECT 
   n.uuid,
   n.title,
@@ -151,7 +170,7 @@ impl TodoStorage for RusqliteStorage {
     let txn = self.conn.transaction()?;
 
     if let Some(ref pid) = parent_id {
-      if !Self::note_exists_conn(&txn, &pid)? {
+      if !Self::note_exists_conn(&txn, pid)? {
         return Err(ShizenError::NoSuchNote(pid.clone()));
       }
     }
@@ -219,7 +238,7 @@ FROM Notes
           id: note_id.clone(),
           title: r.get(1)?,
           description: r.get(2)?,
-          parent_id: r.get::<_, Option<_>>(3)?.map(|p| NoteId(p)),
+          parent_id: r.get::<_, Option<_>>(3)?.map(NoteId),
         })
       },
     )?)
@@ -261,7 +280,7 @@ FROM Notes
 }
 
 fn database_is_initialized(conn: &Connection) -> ShizenResult<bool> {
-  Ok(conn.query_row(&check_initialized_str(), (), |row| Ok(row.get(0)?))?)
+  Ok(conn.query_row(check_initialized_str(), (), |row| row.get(0))?)
 }
 
 macro_rules! sqlite_str {
@@ -279,7 +298,7 @@ pub fn check_initialized_str() -> &'static str {
 }
 
 const CURRENT_VERSION: usize = 1;
-const SCHEMA_MIGRATIONS: [&'static str; 0] = [];
+const SCHEMA_MIGRATIONS: [&str; 0] = [];
 
 fn run_schema_migrations(conn: &Connection) -> ShizenResult<()> {
   let version = get_schema_version(conn)?;
@@ -307,13 +326,13 @@ mod test {
   #[test]
   #[traced_test]
   fn database_init() {
-    RusqliteStorage::new(None).unwrap();
+    RusqliteStorage::open(None).unwrap();
   }
 
   #[test]
   #[traced_test]
   fn write_read_note() {
-    let mut s = RusqliteStorage::new(None).unwrap();
+    let mut s = RusqliteStorage::open(None).unwrap();
 
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
@@ -334,7 +353,7 @@ mod test {
   #[test]
   #[traced_test]
   fn delete_note() {
-    let mut s = RusqliteStorage::new(None).unwrap();
+    let mut s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -357,7 +376,7 @@ mod test {
   #[test]
   #[traced_test]
   fn delete_note_with_children() {
-    let mut s = RusqliteStorage::new(None).unwrap();
+    let mut s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -401,7 +420,7 @@ mod test {
   #[test]
   #[traced_test]
   fn is_descendent_of() {
-    let mut s = RusqliteStorage::new(None).unwrap();
+    let mut s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -418,17 +437,8 @@ mod test {
 
     trace!("{:#?}", s.load_all_notes().unwrap());
 
-    assert_eq!(
-      RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &riker.id).unwrap(),
-      true
-    );
-    assert_eq!(
-      RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &worf.id).unwrap(),
-      true
-    );
-    assert_eq!(
-      RusqliteStorage::is_descendent_of(&s.conn, &riker.id, &worf.id).unwrap(),
-      true
-    );
+    assert!(RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &riker.id).unwrap());
+    assert!(RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &worf.id).unwrap());
+    assert!(RusqliteStorage::is_descendent_of(&s.conn, &riker.id, &worf.id).unwrap());
   }
 }

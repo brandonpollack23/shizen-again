@@ -8,6 +8,10 @@ pub type ShizenResult<T> = std::result::Result<T, ShizenError>;
 // TODO thiserror
 #[derive(Error, Debug, PartialEq)]
 pub enum ShizenError {
+  #[error("Error creating databse {}", .0)]
+  ErrorCreatingDb(String),
+  #[error("No such file {}", .0)]
+  ErrorOpeningDb(String),
   #[error("Rusqlite internal error")]
   RusqliteError(#[from] rusqlite::Error),
   #[error("Error processing UUID")]
