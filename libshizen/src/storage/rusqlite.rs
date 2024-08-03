@@ -1,5 +1,4 @@
 //! Sqlite storage engine using rusqlite.
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 
 use rusqlite::{Connection, Row};
