@@ -9,8 +9,6 @@ use crate::entities::{Note, NoteId};
 use crate::storage::TodoStorage;
 use crate::{ShizenError, ShizenResult};
 
-// TODO remove parent field from Notes table and replace with a join to children table.
-
 pub struct RusqliteStorage {
   conn: RefCell<Connection>,
 }
@@ -25,6 +23,7 @@ impl RusqliteStorage {
     }
 
     Connection::open(db_path)?;
+    Self::open(Some(&db_path))?;
     Ok(())
   }
 
@@ -76,7 +75,9 @@ impl RusqliteStorage {
   }
 
   fn is_descendent_of(
-    conn: &Connection, ancestor: &NoteId, descendent: &NoteId,
+    conn: &Connection,
+    ancestor: &NoteId,
+    descendent: &NoteId,
   ) -> ShizenResult<bool> {
     // Check if you can traverse upward from descenent to parent.
     let mut query = conn.prepare(
@@ -111,7 +112,9 @@ SELECT
   }
 
   fn note_blocks_other_note(
-    conn: &Connection, blocker: &NoteId, blockee: &NoteId,
+    conn: &Connection,
+    blocker: &NoteId,
+    blockee: &NoteId,
   ) -> ShizenResult<bool> {
     // Check if you can traverse upward from descenent to parent.
     let mut query = conn.prepare(
@@ -168,43 +171,89 @@ WITH RECURSIVE NoteHeirarchy AS (
     let mut stmt = conn.prepare(&Self::get_all_descendents_cte(
       r#"
 SELECT 
-  n.uuid,
-  n.title,
-  n.description,
-  n.parent_id
+  n.*
 FROM NoteHeirarchy as nh
-INNER JOIN Notes AS n ON nh.child = n.uuid
+INNER JOIN FullyQualifiedNotes AS n ON nh.child = n.uuid
 "#,
     ))?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_and_then([note_id.0.to_string()], Self::row_to_note)?
+      .query_and_then([note_id.0.to_string()], |r| Self::row_to_note(r))?
       .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 
     result
   }
 
-  fn row_to_note(r: &Row) -> ShizenResult<Note> {
-    let uuid = Uuid::parse_str(&r.get::<_, String>(0)?)?;
-    let parent_uuid = r
+  fn row_to_note(row: &Row) -> ShizenResult<Note> {
+    let uuid = Uuid::parse_str(&row.get::<_, String>(0)?)?;
+    let parent_uuid = row
       .get::<_, Option<String>>(3)?
       .map(|p| Uuid::parse_str(&p))
       .transpose()?;
+
+    let notes_this_blocks = row
+      .get::<_, Option<String>>(4)?
+      .map(|b| {
+        b.split(',')
+          .map(Uuid::parse_str)
+          .map(|r| r.map_err::<ShizenError, _>(Into::into).map(NoteId))
+          .collect::<ShizenResult<Vec<_>>>()
+      })
+      .unwrap_or(Ok(Vec::new()))?;
+
+    let notes_blocking_this = row
+      .get::<_, Option<String>>(5)?
+      .map(|b| {
+        b.split(',')
+          .map(Uuid::parse_str)
+          .map(|r| r.map_err::<ShizenError, _>(Into::into).map(NoteId))
+          .collect::<ShizenResult<Vec<_>>>()
+      })
+      .unwrap_or(Ok(Vec::new()))?;
+
     Ok(Note {
       id: NoteId(uuid),
-      title: r.get(1)?,
-      description: r.get(2)?,
+      title: row.get(1)?,
+      description: row.get(2)?,
       parent_id: parent_uuid.map(NoteId),
-      notes_this_blocks: Vec::new(),
-      notes_blocking_this: Vec::new(),
+      notes_this_blocks,
+      notes_blocking_this,
     })
+  }
+
+  fn notes_blocked_by_note(
+    conn: &Connection,
+    note_id: &NoteId,
+  ) -> Result<Vec<NoteId>, ShizenError> {
+    Ok(
+      conn
+        .prepare("SELECT blockee FROM Dependencies where blocker = ?")?
+        .query_and_then([note_id.0.to_string()], |r| {
+          Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
+        })?
+        .collect::<ShizenResult<Vec<_>>>()?,
+    )
+  }
+
+  fn notes_blocking_note(conn: &Connection, note_id: &NoteId) -> Result<Vec<NoteId>, ShizenError> {
+    Ok(
+      conn
+        .prepare("SELECT blocker FROM Dependencies where blockee = ?")?
+        .query_and_then([note_id.0.to_string()], |r| {
+          Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
+        })?
+        .collect::<ShizenResult<Vec<_>>>()?,
+    )
   }
 }
 
 impl TodoStorage for RusqliteStorage {
   fn create_new_note(
-    &mut self, title: &str, description: Option<&str>, parent_id: Option<&NoteId>,
+    &mut self,
+    title: &str,
+    description: Option<&str>,
+    parent_id: Option<&NoteId>,
   ) -> ShizenResult<Note> {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
@@ -217,13 +266,8 @@ impl TodoStorage for RusqliteStorage {
 
     let uuid = Uuid::new_v4();
     txn.execute(
-      "INSERT INTO Notes (uuid, title, description, parent_id) VALUES (?, ?, ?, ?)",
-      (
-        uuid.to_string(),
-        title,
-        description,
-        parent_id.as_ref().map(|p| p.0.to_string()),
-      ),
+      "INSERT INTO Notes (uuid, title, description) VALUES (?, ?, ?)",
+      (uuid.to_string(), title, description),
     )?;
 
     if let Some(p) = parent_id {
@@ -252,15 +296,11 @@ impl TodoStorage for RusqliteStorage {
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>> {
     let conn = self.conn.borrow();
     let mut stmt = conn.prepare(
-      r#"
-SELECT 
-  uuid, title, description, parent_id 
-FROM Notes
-"#,
+      "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes",
     )?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_and_then((), Self::row_to_note)?
+      .query_and_then((), |r| Self::row_to_note(r))?
       .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 
@@ -271,29 +311,29 @@ FROM Notes
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    let notes_blocking_this = txn
-      .prepare("SELECT blocker FROM Dependencies where blockee = ?")?
-      .query_and_then([note_id.0.to_string()], |r| {
-        Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
-      })?
-      .collect::<ShizenResult<Vec<_>>>()?;
-
-    let notes_this_blocks = txn
-      .prepare("SELECT blockee FROM Dependencies where blocker = ?")?
-      .query_and_then([note_id.0.to_string()], |r| {
-        Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
-      })?
-      .collect::<ShizenResult<Vec<_>>>()?;
-
-    Ok(txn.query_row(
-      r#"
-  SELECT 
-    uuid, title, description, parent_id 
-  FROM Notes
-  WHERE uuid = ?
-"#,
+    Ok(txn.query_row_and_then::<Note, ShizenError, _, _>(
+      "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes WHERE uuid = ?",
       [note_id.0.to_string()],
       |r| {
+        println!("TEST TEST {:#?}", r);
+        let notes_this_blocks = r
+          .get::<_, Option<String>>(4)?
+          .map(|b| b
+            .split(',')
+            .map(Uuid::parse_str)
+            .map(|r| r.map_err::<ShizenError, _>(Into::into).map(NoteId))
+            .collect::<ShizenResult<Vec<_>>>()
+          ).unwrap_or(Ok(Vec::new()))?;
+
+        let notes_blocking_this = r
+          .get::<_, Option<String>>(5)?
+          .map(|b| b
+            .split(',')
+            .map(Uuid::parse_str)
+            .map(|r| r.map_err::<ShizenError, _>(Into::into).map(NoteId))
+            .collect::<ShizenResult<Vec<_>>>()
+          ).unwrap_or(Ok(Vec::new()))?;
+
         Ok(Note {
           id: note_id.clone(),
           title: r.get(1)?,
@@ -328,7 +368,9 @@ FROM Notes
   }
 
   fn update_description(
-    &mut self, note_id: &NoteId, description: Option<&str>,
+    &mut self,
+    note_id: &NoteId,
+    description: Option<&str>,
   ) -> ShizenResult<()> {
     if description.is_none() {
       self.conn.borrow().execute(
