@@ -9,7 +9,7 @@ pub mod rusqlite;
 pub trait TodoStorage {
   // Create
   fn create_new_note(
-    &mut self, title: &str, description: Option<&str>, parent: Option<NoteId>,
+    &mut self, title: &str, description: Option<&str>, parent: Option<&NoteId>,
   ) -> ShizenResult<Note>;
   // Read
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>>;

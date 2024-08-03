@@ -165,11 +165,11 @@ INNER JOIN Notes AS n ON nh.child = n.uuid
 
 impl TodoStorage for RusqliteStorage {
   fn create_new_note(
-    &mut self, title: &str, description: Option<&str>, parent_id: Option<NoteId>,
+    &mut self, title: &str, description: Option<&str>, parent_id: Option<&NoteId>,
   ) -> ShizenResult<Note> {
     let txn = self.conn.transaction()?;
 
-    if let Some(ref pid) = parent_id {
+    if let Some(pid) = parent_id {
       if !Self::note_exists_conn(&txn, pid)? {
         return Err(ShizenError::NoSuchNote(pid.clone()));
       }
@@ -186,7 +186,7 @@ impl TodoStorage for RusqliteStorage {
       ),
     )?;
 
-    if let Some(ref p) = parent_id {
+    if let Some(p) = parent_id {
       trace!("Adding parent to new note: {parent_id:?}");
       let i = txn.execute(
         "INSERT INTO Children (parent, child) VALUES (?, ?)",
@@ -203,7 +203,7 @@ impl TodoStorage for RusqliteStorage {
       id: NoteId(uuid),
       title: title.to_string(),
       description: description.map(|s| s.to_string()),
-      parent_id,
+      parent_id: parent_id.cloned(),
     })
   }
 

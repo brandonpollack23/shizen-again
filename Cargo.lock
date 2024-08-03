@@ -3580,6 +3580,7 @@ dependencies = [
  "libshizen",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
