@@ -833,5 +833,51 @@ mod test {
     assert!(r.is_err());
   }
 
-  // TODO remove deps
+  #[test]
+  #[traced_test]
+  fn remove_deps_work() {
+    let mut s = RusqliteStorage::open(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+    let bev = s
+      .create_new_note("Beverly Crusher", "Capable and attractive doc".into(), None)
+      .unwrap();
+
+    s.add_blocked_note(&bev.id, &picard_note.id).unwrap(); // We all know Jean-Luc depends on and is often blocked by bev.
+    s.remove_blocked_note(&bev.id, &picard_note.id).unwrap();
+
+    let readback_pic = s.load_note(&picard_note.id).unwrap();
+    assert_eq!(readback_pic.notes_blocking_this, vec![]);
+    assert_eq!(readback_pic.notes_this_blocks, vec![]);
+
+    let readback_bev = s.load_note(&bev.id).unwrap();
+    assert_eq!(readback_bev.notes_blocking_this, vec![]);
+    assert_eq!(readback_bev.notes_this_blocks, vec![]);
+  }
+
+  #[test]
+  #[traced_test]
+  fn remove_deps_loop_allows_adding_dep() {
+    let mut s = RusqliteStorage::open(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+    let bev = s
+      .create_new_note("Beverly Crusher", "Capable and attractive doc".into(), None)
+      .unwrap();
+
+    s.add_blocked_note(&bev.id, &picard_note.id).unwrap();
+    let r = s.add_blocked_note(&picard_note.id, &bev.id);
+
+    let wesley = s
+      .create_new_note("Wesley Crusher", "Kid".into(), None)
+      .unwrap();
+
+    s.add_blocked_note(&wesley.id, &bev.id).unwrap();
+    let r = s.add_blocked_note(&picard_note.id, &wesley.id);
+
+    s.remove_blocked_note(&wesley.id, &bev.id).unwrap();
+    s.add_blocked_note(&picard_note.id, &wesley.id).unwrap();
+  }
 }
