@@ -1,4 +1,7 @@
 //! Sqlite storage engine using rusqlite.
+use std::borrow::BorrowMut;
+use std::cell::RefCell;
+
 use rusqlite::{Connection, Row};
 use tracing::{info, trace};
 use uuid::Uuid;
@@ -10,7 +13,7 @@ use crate::{ShizenError, ShizenResult};
 // TODO remove parent field from Notes table and replace with a join to children table.
 
 pub struct RusqliteStorage {
-  conn: Connection,
+  conn: RefCell<Connection>,
 }
 
 impl RusqliteStorage {
@@ -60,7 +63,9 @@ impl RusqliteStorage {
 
     info!("Database running at version {}", get_schema_version(&conn)?);
 
-    Ok(RusqliteStorage { conn })
+    Ok(RusqliteStorage {
+      conn: RefCell::new(conn),
+    })
   }
 
   fn note_exists_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<bool> {
@@ -202,7 +207,8 @@ impl TodoStorage for RusqliteStorage {
   fn create_new_note(
     &mut self, title: &str, description: Option<&str>, parent_id: Option<&NoteId>,
   ) -> ShizenResult<Note> {
-    let txn = self.conn.transaction()?;
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
 
     if let Some(pid) = parent_id {
       if !Self::note_exists_conn(&txn, pid)? {
@@ -245,7 +251,8 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>> {
-    let mut stmt = self.conn.prepare(
+    let conn = self.conn.borrow();
+    let mut stmt = conn.prepare(
       r#"
 SELECT 
   uuid, title, description, parent_id 
@@ -261,9 +268,25 @@ FROM Notes
     result
   }
 
-  // TODO get note deps with join
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note> {
-    Ok(self.conn.query_row(
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
+
+    let notes_blocking_this = txn
+      .prepare("SELECT blocker FROM Dependencies where blockee = ?")?
+      .query_and_then([note_id.0.to_string()], |r| {
+        return Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?));
+      })?
+      .collect::<ShizenResult<Vec<_>>>()?;
+
+    let notes_this_blocks = txn
+      .prepare("SELECT blockee FROM Dependencies where blocker = ?")?
+      .query_and_then([note_id.0.to_string()], |r| {
+        return Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?));
+      })?
+      .collect::<ShizenResult<Vec<_>>>()?;
+
+    Ok(txn.query_row(
       r#"
   SELECT 
     uuid, title, description, parent_id 
@@ -277,19 +300,19 @@ FROM Notes
           title: r.get(1)?,
           description: r.get(2)?,
           parent_id: r.get::<_, Option<_>>(3)?.map(NoteId),
-          notes_this_blocks: Vec::new(),
-          notes_blocking_this: Vec::new(),
+          notes_this_blocks,
+          notes_blocking_this,
         })
       },
     )?)
   }
 
   fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool> {
-    Self::note_exists_conn(&self.conn, note_id)
+    Self::note_exists_conn(&self.conn.borrow(), note_id)
   }
 
   fn get_all_descendents(&self, note_id: &NoteId) -> ShizenResult<Vec<Note>> {
-    Self::get_all_descendents(&self.conn, note_id)
+    Self::get_all_descendents(&self.conn.borrow(), note_id)
   }
 
   fn get_all_blocked(&self, note_id: &NoteId, recursive: bool) -> ShizenResult<Vec<Note>> {
@@ -297,7 +320,7 @@ FROM Notes
   }
 
   fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
-    self.conn.execute(
+    self.conn.borrow().execute(
       r#"UPDATE Notes SET title = "?" WHERE id = ?"#,
       [title, &note_id.0.to_string()],
     )?;
@@ -309,7 +332,7 @@ FROM Notes
     &mut self, note_id: &NoteId, description: Option<&str>,
   ) -> ShizenResult<()> {
     if description.is_none() {
-      self.conn.execute(
+      self.conn.borrow().execute(
         r#"UPDATE Notes SET description = NULL WHERE id = ?"#,
         [&note_id.0.to_string()],
       )?;
@@ -317,7 +340,7 @@ FROM Notes
       return Ok(());
     }
 
-    self.conn.execute(
+    self.conn.borrow().execute(
       r#"UPDATE Notes SET description = "?" WHERE id = ?"#,
       (description.unwrap(), &note_id.0.to_string()),
     )?;
@@ -326,7 +349,8 @@ FROM Notes
   }
 
   fn update_parent(&mut self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()> {
-    let mut txn = self.conn.transaction()?;
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
 
     if !Self::note_exists_conn(&txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
@@ -370,7 +394,8 @@ FROM Notes
   }
 
   fn add_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
-    let mut txn = self.conn.transaction()?;
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
 
     if !Self::note_exists_conn(&txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
@@ -398,7 +423,8 @@ FROM Notes
   }
 
   fn remove_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
-    let mut txn = self.conn.transaction()?;
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
 
     if !Self::note_exists_conn(&txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
@@ -430,7 +456,8 @@ FROM Notes
   }
 
   fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
-    let txn = self.conn.transaction()?;
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
 
     // TODO can i do this more efficently and not recalculate the CTE?
     txn
@@ -612,9 +639,13 @@ mod test {
 
     trace!("{:#?}", s.load_all_notes().unwrap());
 
-    assert!(RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &riker.id).unwrap());
-    assert!(RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &worf.id).unwrap());
-    assert!(RusqliteStorage::is_descendent_of(&s.conn, &riker.id, &worf.id).unwrap());
+    assert!(
+      RusqliteStorage::is_descendent_of(&s.conn.borrow(), &picard_note.id, &riker.id).unwrap()
+    );
+    assert!(
+      RusqliteStorage::is_descendent_of(&s.conn.borrow(), &picard_note.id, &worf.id).unwrap()
+    );
+    assert!(RusqliteStorage::is_descendent_of(&s.conn.borrow(), &riker.id, &worf.id).unwrap());
   }
 
   // TODO update title
