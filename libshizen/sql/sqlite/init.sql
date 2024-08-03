@@ -43,10 +43,11 @@ SELECT
   title,
   description,
   parent,
+  -- TODO children
   GROUP_CONCAT(blocks.blockee, ',') AS blocks,
   GROUP_CONCAT(blocked.blocker, ',') AS blocked
 FROM Notes AS n
 LEFT JOIN Children AS c ON n.uuid = c.child
 LEFT JOIN Dependencies AS blocks ON n.uuid = blocks.blocker
-LEFT JOIN Dependencies AS blocked ON n.uuid = blocks.blockee
+LEFT JOIN Dependencies AS blocked ON n.uuid = blocked.blockee
 GROUP BY uuid, title, description, parent;

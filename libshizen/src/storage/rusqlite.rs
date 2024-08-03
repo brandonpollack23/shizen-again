@@ -371,7 +371,6 @@ impl TodoStorage for RusqliteStorage {
       "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes WHERE uuid = ?",
       [note_id.0.to_string()],
       |r| {
-        println!("TEST TEST {:#?}", r);
         let notes_this_blocks = r
           .get::<_, Option<String>>(4)?
           .map(|b| b
@@ -416,7 +415,7 @@ impl TodoStorage for RusqliteStorage {
 
   fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
     self.conn.borrow().execute(
-      r#"UPDATE Notes SET title = "?" WHERE id = ?"#,
+      r#"UPDATE Notes SET title = ? WHERE uuid = ?"#,
       [title, &note_id.0.to_string()],
     )?;
 
@@ -430,7 +429,7 @@ impl TodoStorage for RusqliteStorage {
   ) -> ShizenResult<()> {
     if description.is_none() {
       self.conn.borrow().execute(
-        r#"UPDATE Notes SET description = NULL WHERE id = ?"#,
+        r#"UPDATE Notes SET description = NULL WHERE uuid = ?"#,
         [&note_id.0.to_string()],
       )?;
 
@@ -438,7 +437,7 @@ impl TodoStorage for RusqliteStorage {
     }
 
     self.conn.borrow().execute(
-      r#"UPDATE Notes SET description = "?" WHERE id = ?"#,
+      r#"UPDATE Notes SET description = ? WHERE uuid = ?"#,
       (description.unwrap(), &note_id.0.to_string()),
     )?;
 
@@ -455,7 +454,7 @@ impl TodoStorage for RusqliteStorage {
 
     if parent.is_none() {
       txn.execute(
-        r#"UPDATE Notes SET parent = NULL WHERE id = ?"#,
+        r#"UPDATE Notes SET parent = NULL WHERE uuid = ?"#,
         [&note_id.0.to_string()],
       )?;
       txn.execute(
@@ -478,7 +477,7 @@ impl TodoStorage for RusqliteStorage {
     }
 
     txn.execute(
-      "UPDATE Notes SET parent = ? WHERE id = ?",
+      "UPDATE Notes SET parent = ? WHERE uuid = ?",
       [parent.unwrap().0.to_string(), note_id.0.to_string()],
     )?;
     txn.execute(
@@ -509,6 +508,8 @@ impl TodoStorage for RusqliteStorage {
         blocked_note.clone(),
       ));
     }
+
+    trace!("Adding dependency {:?} blocks {:?}", note_id, blocked_note);
 
     txn.execute(
       "INSERT INTO Dependencies (blocker, blockee) VALUES (?, ?)",
@@ -745,8 +746,92 @@ mod test {
     assert!(RusqliteStorage::is_descendent_of(&s.conn.borrow(), &riker.id, &worf.id).unwrap());
   }
 
-  // TODO update title
-  // TODO update desc and to null
-  // TODO Add deps
-  // TODO rmove deps
+  #[test]
+  #[traced_test]
+  fn update_title() {
+    let mut s = RusqliteStorage::open(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+
+    s.update_title(&picard_note.id, "Patrick").unwrap();
+
+    let readback = s.load_note(&picard_note.id).unwrap();
+
+    assert_eq!(readback.title, "Patrick");
+  }
+
+  #[test]
+  #[traced_test]
+  fn update_description() {
+    let mut s = RusqliteStorage::open(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+
+    s.update_description(&picard_note.id, Some("Former captain of the stargazer"))
+      .unwrap();
+
+    let readback = s.load_note(&picard_note.id).unwrap();
+
+    assert_eq!(
+      readback.description,
+      Some("Former captain of the stargazer".to_string())
+    );
+
+    s.update_description(&picard_note.id, None).unwrap();
+
+    let readback = s.load_note(&picard_note.id).unwrap();
+
+    assert_eq!(readback.description, None);
+  }
+
+  #[test]
+  #[traced_test]
+  fn add_deps_work() {
+    let mut s = RusqliteStorage::open(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+    let bev = s
+      .create_new_note("Beverly Crusher", "Capable and attractive doc".into(), None)
+      .unwrap();
+
+    s.add_blocked_note(&bev.id, &picard_note.id).unwrap(); // We all know Jean-Luc depends on and is often blocked by bev.
+
+    let readback_pic = s.load_note(&picard_note.id).unwrap();
+    assert_eq!(readback_pic.notes_blocking_this, vec![bev.id.clone()]);
+    assert_eq!(readback_pic.notes_this_blocks, vec![]);
+
+    let readback_bev = s.load_note(&bev.id).unwrap();
+    assert_eq!(readback_bev.notes_blocking_this, vec![]);
+    assert_eq!(readback_bev.notes_this_blocks, vec![picard_note.id.clone()]);
+  }
+
+  #[test]
+  #[traced_test]
+  fn add_deps_loop_fails() {
+    let mut s = RusqliteStorage::open(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+    let bev = s
+      .create_new_note("Beverly Crusher", "Capable and attractive doc".into(), None)
+      .unwrap();
+
+    s.add_blocked_note(&bev.id, &picard_note.id).unwrap();
+    let r = s.add_blocked_note(&picard_note.id, &bev.id);
+    assert!(r.is_err());
+
+    let wesley = s
+      .create_new_note("Wesley Crusher", "Kid".into(), None)
+      .unwrap();
+
+    s.add_blocked_note(&wesley.id, &bev.id).unwrap();
+    let r = s.add_blocked_note(&picard_note.id, &wesley.id);
+
+    assert!(r.is_err());
+  }
+
+  // TODO remove deps
 }
