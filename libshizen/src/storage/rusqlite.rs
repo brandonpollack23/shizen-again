@@ -363,6 +363,20 @@ impl TodoStorage for RusqliteStorage {
     result
   }
 
+  fn load_all_unblocked_notes(&self) -> ShizenResult<Vec<Note>> {
+    let conn = self.conn.borrow();
+    let mut stmt = conn.prepare(
+      "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes WHERE blocked = NULL OR blocked = ''",
+    )?;
+
+    let result: ShizenResult<Vec<_>> = stmt
+      .query_and_then((), |r| Self::row_to_note(r))?
+      .map(|v: ShizenResult<_>| v.map_err(Into::into))
+      .collect();
+
+    result
+  }
+
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note> {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
@@ -370,34 +384,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(txn.query_row_and_then::<Note, ShizenError, _, _>(
       "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes WHERE uuid = ?",
       [note_id.0.to_string()],
-      |r| {
-        let notes_this_blocks = r
-          .get::<_, Option<String>>(4)?
-          .map(|b| b
-            .split(',')
-            .map(Uuid::parse_str)
-            .map(|r| r.map_err::<ShizenError, _>(Into::into).map(NoteId))
-            .collect::<ShizenResult<Vec<_>>>()
-          ).unwrap_or(Ok(Vec::new()))?;
-
-        let notes_blocking_this = r
-          .get::<_, Option<String>>(5)?
-          .map(|b| b
-            .split(',')
-            .map(Uuid::parse_str)
-            .map(|r| r.map_err::<ShizenError, _>(Into::into).map(NoteId))
-            .collect::<ShizenResult<Vec<_>>>()
-          ).unwrap_or(Ok(Vec::new()))?;
-
-        Ok(Note {
-          id: note_id.clone(),
-          title: r.get(1)?,
-          description: r.get(2)?,
-          parent_id: r.get::<_, Option<_>>(3)?.map(NoteId),
-          notes_this_blocks,
-          notes_blocking_this,
-        })
-      },
+      Self::row_to_note
     )?)
   }
 

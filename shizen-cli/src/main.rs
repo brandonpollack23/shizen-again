@@ -22,7 +22,10 @@ enum Commands {
   #[command(visible_alias = "cr")]
   Create,
   #[command(visible_alias = "ls")]
-  List,
+  List {
+    #[arg(short, long, default_value_t = false)]
+    show_blocked: bool,
+  },
   #[command(visible_alias = "a")]
   Add(AddArguments),
   #[command(visible_alias = "rm")]
@@ -82,12 +85,23 @@ fn main() {
   let mut database = database.unwrap();
 
   match cli.command {
-    Commands::List => {
+    Commands::List { show_blocked } => {
       // TODO prettier
-      println!(
-        "{}",
-        format_note_list(&database.load_all_notes().expect("error loading all notes"))
-      );
+      if show_blocked {
+        println!(
+          "{}",
+          format_note_list(&database.load_all_notes().expect("error loading all notes"))
+        );
+      } else {
+        println!(
+          "{}",
+          format_note_list(
+            &database
+              .load_all_unblocked_notes()
+              .expect("error loading all notes")
+          )
+        );
+      }
     }
     Commands::Create => unreachable!("This case is handled explicitly above"),
     Commands::Add(args) => {
@@ -136,10 +150,22 @@ fn main() {
 
 fn format_note(note: &Note) -> String {
   format!(
-    "{} -- ({})\n  {}",
+    "{} -- ({})\n  {}\n  Blocking: {}\n  Blocked By: {}",
     note.title,
     note.id,
-    note.description.clone().unwrap_or("---".to_string())
+    note.description.clone().unwrap_or("---".to_string()),
+    note
+      .notes_this_blocks
+      .iter()
+      .map(|n| format!("{}", n.to_string()))
+      .collect::<Vec<_>>()
+      .join(","),
+    note
+      .notes_blocking_this
+      .iter()
+      .map(|n| format!("{}", n.to_string()))
+      .collect::<Vec<_>>()
+      .join(","),
   )
 }
 
