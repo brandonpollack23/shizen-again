@@ -1,3 +1,5 @@
+use std::fmt::{Display, Write};
+
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -10,6 +12,12 @@ pub struct Note {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NoteId(pub Uuid);
+
+impl Display for NoteId {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(&self.0.to_string())
+  }
+}
 
 #[derive(Debug, Clone)]
 pub struct PeerId(pub Uuid);

@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-use libshizen::entities::NoteId;
+use libshizen::entities::{Note, NoteId};
 use libshizen::storage::rusqlite::RusqliteStorage;
 use libshizen::storage::TodoStorage;
 use libshizen::ShizenError;
@@ -35,6 +35,7 @@ enum Commands {
 #[derive(Args, Debug, PartialEq, Eq)]
 struct AddArguments {
   title: String,
+  #[arg(short, long)]
   description: Option<String>,
   parent_id: Option<String>,
 }
@@ -67,8 +68,8 @@ fn main() {
     Commands::List => {
       // TODO prettier
       println!(
-        "{:#?}",
-        database.load_all_notes().expect("error loading all notes")
+        "{}",
+        format_note_list(&database.load_all_notes().expect("error loading all notes"))
       );
     }
     Commands::Create => unreachable!("This case is handled explicitly above"),
@@ -89,4 +90,22 @@ fn main() {
         .expect("Could not delete note");
     }
   }
+}
+
+fn format_note(note: &Note) -> String {
+  format!(
+    "{} -- ({})\n  {}",
+    note.title,
+    note.id,
+    note.description.clone().unwrap_or("---".to_string())
+  )
+}
+
+fn format_note_list(notes: &[Note]) -> String {
+  let mut list = String::new();
+  for n in notes {
+    list.push_str(&format!("• {}\n\n", format_note(n)))
+  }
+
+  list
 }
