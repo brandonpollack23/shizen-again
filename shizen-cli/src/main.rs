@@ -37,6 +37,7 @@ struct AddArguments {
   title: String,
   #[arg(short, long)]
   description: Option<String>,
+  #[arg(short, long)]
   parent_id: Option<String>,
 }
 

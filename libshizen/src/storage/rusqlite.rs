@@ -342,7 +342,7 @@ mod test {
       .create_new_note(
         "Riker",
         "Number One of the enterprise".into(),
-        picard_note.id.clone().into(),
+        Some(&picard_note.id),
       )
       .unwrap();
 
@@ -361,7 +361,7 @@ mod test {
       .create_new_note(
         "Riker",
         "Number One of the enterprise".into(),
-        picard_note.id.clone().into(),
+        Some(&picard_note.id),
       )
       .unwrap();
 
@@ -384,17 +384,15 @@ mod test {
       .create_new_note(
         "Riker",
         "Number One of the enterprise".into(),
-        picard_note.id.clone().into(),
+        Some(&picard_note.id),
       )
       .unwrap();
 
     let worf = s
-      .create_new_note(
-        "Worf",
-        "Chief of security".into(),
-        picard_note.id.clone().into(),
-      )
+      .create_new_note("Worf", "Chief of security".into(), Some(&picard_note.id))
       .unwrap();
+
+    assert_eq!(s.get_all_descendents(&picard_note.id).unwrap().len(), 2);
 
     s.delete_note(&picard_note.id).unwrap();
 
@@ -428,11 +426,11 @@ mod test {
       .create_new_note(
         "Riker",
         "Number One of the enterprise".into(),
-        picard_note.id.clone().into(),
+        Some(&picard_note.id),
       )
       .unwrap();
     let worf = s
-      .create_new_note("Worf", "Chief of security".into(), riker.id.clone().into())
+      .create_new_note("Worf", "Chief of security".into(), Some(&riker.id))
       .unwrap();
 
     trace!("{:#?}", s.load_all_notes().unwrap());
