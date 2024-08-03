@@ -275,14 +275,14 @@ FROM Notes
     let notes_blocking_this = txn
       .prepare("SELECT blocker FROM Dependencies where blockee = ?")?
       .query_and_then([note_id.0.to_string()], |r| {
-        return Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?));
+        Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
       })?
       .collect::<ShizenResult<Vec<_>>>()?;
 
     let notes_this_blocks = txn
       .prepare("SELECT blockee FROM Dependencies where blocker = ?")?
       .query_and_then([note_id.0.to_string()], |r| {
-        return Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?));
+        Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
       })?
       .collect::<ShizenResult<Vec<_>>>()?;
 
