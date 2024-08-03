@@ -19,19 +19,21 @@ struct Cli {
 #[command(arg_required_else_help(true))]
 enum Commands {
   /// List notes/todos.
-  #[command(alias = "cr")]
+  #[command(visible_alias = "cr")]
   Create,
-  #[command(alias = "ls")]
+  #[command(visible_alias = "ls")]
   List,
-  #[command(alias = "a")]
+  #[command(visible_alias = "a")]
   Add(AddArguments),
-  #[command(alias = "rm")]
+  #[command(visible_alias = "rm")]
   Remove {
     /// Parsable UUID of parent note.
     uuid: String,
   },
-  // TODO update title/desc/parent notes
-  // TODO update dependencies
+  #[command(visible_alias = "up")]
+  Update(UpdateArguments),
+  #[command(visible_alias = "dep")]
+  AddDependency { from: String, to: String },
 }
 
 #[derive(Args, Debug, PartialEq, Eq)]
@@ -41,6 +43,18 @@ struct AddArguments {
   description: Option<String>,
   #[arg(short, long)]
   parent_id: Option<String>,
+}
+
+#[derive(Args, Debug, PartialEq, Eq)]
+struct UpdateArguments {
+  #[arg(short, long)]
+  note_id: String,
+  #[arg(short, long)]
+  title: Option<String>,
+  #[arg(short, long)]
+  description: Option<String>,
+  #[arg(short, long, default_value_t = false)]
+  remove_description: bool,
 }
 
 fn main() {
@@ -91,6 +105,31 @@ fn main() {
       database
         .delete_note(&NoteId(uuid))
         .expect("Could not delete note");
+    }
+    Commands::Update(args) => {
+      let note_id = NoteId(Uuid::parse_str(&args.note_id).expect("could not parse note id"));
+      if let Some(t) = args.title {
+        database
+          .update_title(&note_id, &t)
+          .expect("error updating title");
+      }
+
+      if args.remove_description {
+        database
+          .update_description(&note_id, None)
+          .expect("Error removing description");
+      } else if let Some(d) = args.description {
+        database
+          .update_description(&note_id, Some(&d))
+          .expect("error updating description");
+      }
+    }
+    Commands::AddDependency { from, to } => {
+      let from = NoteId(Uuid::parse_str(&from).expect("could not parse note id"));
+      let to = NoteId(Uuid::parse_str(&to).expect("could not parse note id"));
+      database
+        .add_blocked_note(&from, &to)
+        .expect("error adding dependency");
     }
   }
 }
