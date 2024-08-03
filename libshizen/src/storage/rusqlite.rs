@@ -261,6 +261,7 @@ FROM Notes
     result
   }
 
+  // TODO get note deps with join
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note> {
     Ok(self.conn.query_row(
       r#"
@@ -291,30 +292,8 @@ FROM Notes
     Self::get_all_descendents(&self.conn, note_id)
   }
 
-  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
-    let txn = self.conn.transaction()?;
-
-    // TODO can i do this more efficently and not recalculate the CTE?
-    txn
-      .prepare(&Self::get_all_descendents_cte(
-        "DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);",
-      ))?
-      .execute([note_id.0.to_string()])?;
-    txn
-      .prepare(&Self::get_all_descendents_cte(
-        "DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);",
-      ))?
-      .execute([note_id.0.to_string()])?;
-
-    txn.execute("DELETE FROM Notes WHERE uuid = ?", [note_id.0.to_string()])?;
-    txn.execute(
-      "DELETE FROM Children WHERE child = ?1 OR parent = ?1",
-      [note_id.0.to_string()],
-    )?;
-
-    txn.commit()?;
-
-    Ok(())
+  fn get_all_blocked(&self, note_id: &NoteId, recursive: bool) -> ShizenResult<Vec<Note>> {
+    todo!()
   }
 
   fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
@@ -370,7 +349,21 @@ FROM Notes
       return Err(ShizenError::NoSuchNote(parent.unwrap().clone()));
     }
 
-    todo!("verify parenting doesnt make loop then set it");
+    if Self::is_descendent_of(&txn, note_id, parent.unwrap())? {
+      return Err(ShizenError::ParentCircularReference(
+        parent.unwrap().clone(),
+        note_id.clone(),
+      ));
+    }
+
+    txn.execute(
+      "UPDATE Notes SET parent = ? WHERE id = ?",
+      [parent.unwrap().0.to_string(), note_id.0.to_string()],
+    )?;
+    txn.execute(
+      "INSERT INTO Children (parent, child) VALUES (?, ?)",
+      [parent.unwrap().0.to_string(), note_id.0.to_string()],
+    )?;
 
     txn.commit()?;
     Ok(())
@@ -395,8 +388,10 @@ FROM Notes
       ));
     }
 
-    // TODO add the dep
-    todo!("verify dependency doesnt make loop and both notes exists then set it");
+    txn.execute(
+      "INSERT INTO Dependencies (blocker, blockee) VALUES (?, ?)",
+      [note_id.0.to_string(), blocked_note.0.to_string()],
+    )?;
 
     txn.commit()?;
     Ok(())
@@ -413,9 +408,50 @@ FROM Notes
       return Err(ShizenError::NoSuchNote(blocked_note.clone()));
     }
 
-    todo!("verify there is such a dependency and then remove it");
+    let dep_exists: bool = txn.query_row(
+      "SELECT COUNT(*) FROM Dependencies WHERE blocker = ? and blockee = ?",
+      [note_id.0.to_string(), blocked_note.0.to_string()],
+      |r| r.get(0),
+    )?;
+    if !dep_exists {
+      return Err(ShizenError::NoSuchDependency(
+        note_id.clone(),
+        blocked_note.clone(),
+      ));
+    }
+
+    txn.execute(
+      "DELETE FROM Dependencies WHERE blocker = ? AND blockee = ?",
+      [note_id.0.to_string(), blocked_note.0.to_string()],
+    )?;
 
     txn.commit()?;
+    Ok(())
+  }
+
+  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
+    let txn = self.conn.transaction()?;
+
+    // TODO can i do this more efficently and not recalculate the CTE?
+    txn
+      .prepare(&Self::get_all_descendents_cte(
+        "DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);",
+      ))?
+      .execute([note_id.0.to_string()])?;
+    txn
+      .prepare(&Self::get_all_descendents_cte(
+        "DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);",
+      ))?
+      .execute([note_id.0.to_string()])?;
+
+    txn.execute("DELETE FROM Notes WHERE uuid = ?", [note_id.0.to_string()])?;
+    txn.execute(
+      "DELETE FROM Children WHERE child = ?1 OR parent = ?1",
+      [note_id.0.to_string()],
+    )?;
+
+    txn.commit()?;
+
     Ok(())
   }
 }
