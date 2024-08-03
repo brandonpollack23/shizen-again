@@ -1,4 +1,5 @@
 //! Sqlite storage engine using rusqlite.
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
 
 use rusqlite::{Connection, Row};
@@ -166,6 +167,28 @@ WITH RECURSIVE NoteHeirarchy AS (
     )
   }
 
+  fn get_all_blocked_cte(stmt: &str) -> String {
+    format!(
+      r#"
+WITH RECURSIVE NoteHeirarchy AS (
+  SELECT
+    blocked
+  FROM Dependencies
+  WHERE blocker = ?1
+
+  UNION ALL
+
+  SELECT
+    d.blocked
+  FROM Dependencies AS d
+  INNER JOIN NoteHeirarchy AS curr ON d.blockee = curr.blocker
+)
+{}
+"#,
+      stmt
+    )
+  }
+
   fn get_all_descendents(conn: &Connection, note_id: &NoteId) -> ShizenResult<Vec<Note>> {
     // Check if you can traverse upward from descenent to parent.
     let mut stmt = conn.prepare(&Self::get_all_descendents_cte(
@@ -174,6 +197,39 @@ SELECT
   n.*
 FROM NoteHeirarchy as nh
 INNER JOIN FullyQualifiedNotes AS n ON nh.child = n.uuid
+"#,
+    ))?;
+
+    let result: ShizenResult<Vec<_>> = stmt
+      .query_and_then([note_id.0.to_string()], |r| Self::row_to_note(r))?
+      .map(|v: ShizenResult<_>| v.map_err(Into::into))
+      .collect();
+
+    result
+  }
+
+  fn get_all_blocked(
+    conn: &Connection,
+    note_id: &NoteId,
+    recursive: bool,
+  ) -> ShizenResult<Vec<Note>> {
+    if !recursive {
+      let mut stmt = conn.prepare("SELECT blocked FROM FullyQualifiedNotes WHERE uuid = ?")?;
+
+      let result: ShizenResult<Vec<_>> = stmt
+        .query_and_then([note_id.0.to_string()], |r| Self::row_to_note(r))?
+        .map(|v: ShizenResult<_>| v.map_err(Into::into))
+        .collect();
+
+      return result;
+    }
+
+    let mut stmt = conn.prepare(&Self::get_all_blocked_cte(
+      r#"
+SELECT 
+  n.*
+FROM NoteHeirarchy as nh
+INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
 "#,
     ))?;
 
@@ -355,7 +411,7 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn get_all_blocked(&self, note_id: &NoteId, recursive: bool) -> ShizenResult<Vec<Note>> {
-    todo!()
+    Self::get_all_blocked(&self.conn.borrow(), note_id, recursive)
   }
 
   fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
