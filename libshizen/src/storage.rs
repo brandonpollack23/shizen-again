@@ -11,13 +11,18 @@ pub trait TodoStorage {
   fn create_new_note(
     &mut self, title: &str, description: Option<&str>, parent: Option<&NoteId>,
   ) -> ShizenResult<Note>;
+
   // Read
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>>;
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note>;
   fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool>;
   fn get_all_descendents(&self, note_id: &NoteId) -> ShizenResult<Vec<Note>>;
+
   // Update
-  // TODO
+  fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()>;
+  fn update_description(&self, note_id: &NoteId, description: Option<&str>) -> ShizenResult<()>;
+  fn update_parent(&self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()>;
+  fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
 
   // Delete
   fn delete_note(&mut self, note_id: &NoteId) -> crate::ShizenResult<()>;

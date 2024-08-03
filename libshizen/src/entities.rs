@@ -8,6 +8,8 @@ pub struct Note {
   pub title: String,
   pub description: Option<String>,
   pub parent_id: Option<NoteId>,
+  pub notes_this_blocks: Vec<NoteId>,
+  pub notes_blocking_this: Vec<NoteId>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]

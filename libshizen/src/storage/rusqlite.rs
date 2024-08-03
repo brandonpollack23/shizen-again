@@ -159,6 +159,8 @@ INNER JOIN Notes AS n ON nh.child = n.uuid
       title: r.get(1)?,
       description: r.get(2)?,
       parent_id: parent_uuid.map(NoteId),
+      notes_this_blocks: Vec::new(),
+      notes_blocking_this: Vec::new(),
     })
   }
 }
@@ -204,6 +206,8 @@ impl TodoStorage for RusqliteStorage {
       title: title.to_string(),
       description: description.map(|s| s.to_string()),
       parent_id: parent_id.cloned(),
+      notes_this_blocks: Vec::new(),
+      notes_blocking_this: Vec::new(),
     })
   }
 
@@ -239,6 +243,8 @@ FROM Notes
           title: r.get(1)?,
           description: r.get(2)?,
           parent_id: r.get::<_, Option<_>>(3)?.map(NoteId),
+          notes_this_blocks: Vec::new(),
+          notes_blocking_this: Vec::new(),
         })
       },
     )?)
@@ -276,6 +282,41 @@ FROM Notes
     txn.commit()?;
 
     Ok(())
+  }
+
+  fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
+    self.conn.execute(
+      r#"UPDATE Notes SET title = "?" WHERE id = ?"#,
+      [title, &note_id.0.to_string()],
+    )?;
+
+    Ok(())
+  }
+
+  fn update_description(&self, note_id: &NoteId, description: Option<&str>) -> ShizenResult<()> {
+    if description.is_none() {
+      self.conn.execute(
+        r#"UPDATE Notes SET description = NULL WHERE id = ?"#,
+        [&note_id.0.to_string()],
+      )?;
+
+      return Ok(());
+    }
+
+    self.conn.execute(
+      r#"UPDATE Notes SET description = "?" WHERE id = ?"#,
+      (description.unwrap(), &note_id.0.to_string()),
+    )?;
+
+    Ok(())
+  }
+
+  fn update_parent(&self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()> {
+    todo!("verify parent doesnt make loop and parent exists then set it")
+  }
+
+  fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
+    todo!("verify dependency doesnt make loop and both notes exists then set it")
   }
 }
 
@@ -439,4 +480,8 @@ mod test {
     assert!(RusqliteStorage::is_descendent_of(&s.conn, &picard_note.id, &worf.id).unwrap());
     assert!(RusqliteStorage::is_descendent_of(&s.conn, &riker.id, &worf.id).unwrap());
   }
+
+  // TODO update title
+  // TODO update desc and to null
+  // TODO Add deps
 }
