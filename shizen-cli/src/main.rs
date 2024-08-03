@@ -86,13 +86,13 @@ fn main() {
 
   match cli.command {
     Commands::List { show_blocked } => {
-      // TODO prettier
       if show_blocked {
         println!(
           "{}",
           format_note_list(&database.load_all_notes().expect("error loading all notes"))
         );
       } else {
+        println!("Warning, hiding blocked items, show them with \"-s\"\n");
         println!(
           "{}",
           format_note_list(
