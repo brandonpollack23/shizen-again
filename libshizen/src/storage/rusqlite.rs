@@ -344,28 +344,21 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
 
     Ok(())
   }
-}
 
-impl TodoStorage for RusqliteStorage {
-  fn create_new_note(
-    &mut self,
+  fn create_new_note_txn(
+    txn: &Connection,
+    id: Option<Uuid>,
     title: &str,
     description: Option<&str>,
     parent_id: Option<&NoteId>,
   ) -> ShizenResult<Note> {
-    let mut conn = self
-      .conn
-      .write()
-      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
-    let txn = conn.transaction()?;
-
     if let Some(pid) = parent_id {
       if !Self::note_exists_conn(&txn, pid)? {
         return Err(ShizenError::NoSuchNote(pid.clone()));
       }
     }
 
-    let uuid = Uuid::new_v4();
+    let uuid = id.unwrap_or(Uuid::new_v4());
     txn.execute(
       "INSERT INTO Notes (uuid, title, description) VALUES (?, ?, ?)",
       (uuid.to_string(), title, description),
@@ -387,10 +380,10 @@ impl TodoStorage for RusqliteStorage {
       &[Actions::CreateNote {
         id: NoteId(uuid),
         parent: parent_id.cloned(),
+        title: title.to_string(),
+        description: description.map(|s| s.to_string()),
       }],
     )?;
-
-    txn.commit()?;
 
     Ok(Note {
       id: NoteId(uuid),
@@ -401,6 +394,226 @@ impl TodoStorage for RusqliteStorage {
       notes_this_blocks: Vec::new(),
       notes_blocking_this: Vec::new(),
     })
+  }
+
+  fn update_title_txn(txn: &Connection, note_id: &NoteId, title: &str) -> ShizenResult<()> {
+    let old_title = Self::load_note_conn(&txn, note_id)?.title;
+
+    txn.execute(
+      r#"UPDATE Notes SET title = ? WHERE uuid = ?"#,
+      [title, &note_id.0.to_string()],
+    )?;
+
+    Self::insert_mutations(
+      &txn,
+      &[Actions::UpdateTitle {
+        id: note_id.clone(),
+        new_title: title.to_string(),
+        old_title,
+      }],
+    )?;
+
+    Ok(())
+  }
+
+  fn update_description_txn(
+    txn: &Connection,
+    note_id: &NoteId,
+    description: Option<&str>,
+  ) -> ShizenResult<()> {
+    let old_description = Self::load_note_conn(&txn, note_id)?.description;
+    Self::insert_mutations(
+      &txn,
+      &[Actions::UpdateDescription {
+        id: note_id.clone(),
+        old_description,
+        new_description: description.map(|d| d.to_string()),
+      }],
+    )?;
+
+    if description.is_none() {
+      txn.execute(
+        r#"UPDATE Notes SET description = NULL WHERE uuid = ?"#,
+        [&note_id.0.to_string()],
+      )?;
+    } else {
+      txn.execute(
+        r#"UPDATE Notes SET description = ? WHERE uuid = ?"#,
+        (description.unwrap(), &note_id.0.to_string()),
+      )?;
+    }
+
+    Ok(())
+  }
+
+  fn change_parent_txn(
+    txn: &Connection,
+    note_id: &NoteId,
+    parent: Option<&NoteId>,
+  ) -> ShizenResult<()> {
+    if !Self::note_exists_conn(&txn, note_id)? {
+      return Err(ShizenError::NoSuchNote(note_id.clone()));
+    }
+
+    let old_parent = Self::load_note_conn(&txn, note_id)?.parent_id;
+    Self::insert_mutations(
+      &txn,
+      &[Actions::ChangeParent {
+        id: note_id.clone(),
+        old_parent,
+        new_parent: parent.map(Clone::clone),
+      }],
+    )?;
+
+    if parent.is_none() {
+      txn.execute(
+        r#"UPDATE Notes SET parent = NULL WHERE uuid = ?"#,
+        [&note_id.0.to_string()],
+      )?;
+      txn.execute(
+        "DELETE FROM Children WHERE child = ?",
+        [note_id.0.to_string()],
+      )?;
+    } else {
+      if !Self::note_exists_conn(&txn, parent.unwrap())? {
+        return Err(ShizenError::NoSuchNote(parent.unwrap().clone()));
+      }
+
+      if Self::is_descendent_of(&txn, note_id, parent.unwrap())? {
+        return Err(ShizenError::ParentCircularReference(
+          parent.unwrap().clone(),
+          note_id.clone(),
+        ));
+      }
+
+      txn.execute(
+        "UPDATE Notes SET parent = ? WHERE uuid = ?",
+        [parent.unwrap().0.to_string(), note_id.0.to_string()],
+      )?;
+      txn.execute(
+        "INSERT INTO Children (parent, child) VALUES (?, ?)",
+        [parent.unwrap().0.to_string(), note_id.0.to_string()],
+      )?;
+    }
+
+    Ok(())
+  }
+
+  fn add_dep_txn(txn: &Connection, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
+    if !Self::note_exists_conn(&txn, note_id)? {
+      return Err(ShizenError::NoSuchNote(note_id.clone()));
+    }
+
+    if !Self::note_exists_conn(&txn, blocked_note)? {
+      return Err(ShizenError::NoSuchNote(blocked_note.clone()));
+    }
+
+    Self::insert_mutations(
+      &txn,
+      &[Actions::AddDependency {
+        blocker: note_id.clone(),
+        blockee: blocked_note.clone(),
+      }],
+    )?;
+
+    if Self::note_blocks_other_note(&txn, blocked_note, note_id)? {
+      // This would create a circular dependency.
+      return Err(ShizenError::DependencyCircularReference(
+        note_id.clone(),
+        blocked_note.clone(),
+      ));
+    }
+
+    trace!("Adding dependency {:?} blocks {:?}", note_id, blocked_note);
+
+    txn.execute(
+      "INSERT INTO Dependencies (blocker, blockee) VALUES (?, ?)",
+      [note_id.0.to_string(), blocked_note.0.to_string()],
+    )?;
+
+    Ok(())
+  }
+
+  fn remove_dep_txn(txn: &Connection, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
+    if !Self::note_exists_conn(&txn, note_id)? {
+      return Err(ShizenError::NoSuchNote(note_id.clone()));
+    }
+
+    if !Self::note_exists_conn(&txn, blocked_note)? {
+      return Err(ShizenError::NoSuchNote(blocked_note.clone()));
+    }
+
+    Self::insert_mutations(
+      &txn,
+      &[Actions::RemoveDependency {
+        blocker: note_id.clone(),
+        blockee: blocked_note.clone(),
+      }],
+    )?;
+
+    let dep_exists: bool = txn.query_row(
+      "SELECT COUNT(*) FROM Dependencies WHERE blocker = ? and blockee = ?",
+      [note_id.0.to_string(), blocked_note.0.to_string()],
+      |r| r.get(0),
+    )?;
+    if !dep_exists {
+      return Err(ShizenError::NoSuchDependency(
+        note_id.clone(),
+        blocked_note.clone(),
+      ));
+    }
+
+    txn.execute(
+      "DELETE FROM Dependencies WHERE blocker = ? AND blockee = ?",
+      [note_id.0.to_string(), blocked_note.0.to_string()],
+    )?;
+
+    Ok(())
+  }
+
+  fn delete_note_txn(txn: &Connection, note_id: &NoteId) -> ShizenResult<()> {
+    let old_note = Self::load_note_conn(&txn, note_id)?;
+
+    // TODO can i do this more efficently and not recalculate the CTE?
+    txn
+      .prepare(&Self::get_all_descendents_cte(
+        "DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);",
+      ))?
+      .execute([note_id.0.to_string()])?;
+    txn
+      .prepare(&Self::get_all_descendents_cte(
+        "DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);",
+      ))?
+      .execute([note_id.0.to_string()])?;
+
+    txn.execute("DELETE FROM Notes WHERE uuid = ?", [note_id.0.to_string()])?;
+    txn.execute(
+      "DELETE FROM Children WHERE child = ?1 OR parent = ?1",
+      [note_id.0.to_string()],
+    )?;
+
+    Self::insert_mutations(&txn, &[Actions::DeleteNote { note: old_note }])?;
+
+    Ok(())
+  }
+}
+
+impl TodoStorage for RusqliteStorage {
+  fn create_new_note(
+    &mut self,
+    title: &str,
+    description: Option<&str>,
+    parent_id: Option<&NoteId>,
+  ) -> ShizenResult<Note> {
+    let mut conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+    let txn = conn.transaction()?;
+    let note = Self::create_new_note_txn(&txn, None, title, description, parent_id)?;
+    txn.commit()?;
+
+    Ok(note)
   }
 
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>> {
@@ -477,21 +690,7 @@ impl TodoStorage for RusqliteStorage {
 
     let txn = conn.transaction()?;
 
-    let old_title = Self::load_note_conn(&txn, note_id)?.title;
-
-    txn.execute(
-      r#"UPDATE Notes SET title = ? WHERE uuid = ?"#,
-      [title, &note_id.0.to_string()],
-    )?;
-
-    Self::insert_mutations(
-      &txn,
-      &[Actions::UpdateTitle {
-        id: note_id.clone(),
-        new_title: title.to_string(),
-        old_title,
-      }],
-    )?;
+    Self::update_title_txn(&txn, note_id, title)?;
 
     txn.commit()?;
 
@@ -509,28 +708,7 @@ impl TodoStorage for RusqliteStorage {
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
-    let old_description = Self::load_note_conn(&txn, note_id)?.description;
-    Self::insert_mutations(
-      &txn,
-      &[Actions::UpdateDescription {
-        id: note_id.clone(),
-        old_description,
-        new_description: description.map(|d| d.to_string()),
-      }],
-    )?;
-
-    if description.is_none() {
-      txn.execute(
-        r#"UPDATE Notes SET description = NULL WHERE uuid = ?"#,
-        [&note_id.0.to_string()],
-      )?;
-    } else {
-      txn.execute(
-        r#"UPDATE Notes SET description = ? WHERE uuid = ?"#,
-        (description.unwrap(), &note_id.0.to_string()),
-      )?;
-    }
-
+    Self::update_description_txn(&txn, note_id, description)?;
     txn.commit()?;
 
     Ok(())
@@ -543,50 +721,7 @@ impl TodoStorage for RusqliteStorage {
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
-    if !Self::note_exists_conn(&txn, note_id)? {
-      return Err(ShizenError::NoSuchNote(note_id.clone()));
-    }
-
-    let old_parent = Self::load_note_conn(&txn, note_id)?.parent_id;
-    Self::insert_mutations(
-      &txn,
-      &[Actions::ChangeParent {
-        id: note_id.clone(),
-        old_parent,
-        new_parent: parent.map(Clone::clone),
-      }],
-    )?;
-
-    if parent.is_none() {
-      txn.execute(
-        r#"UPDATE Notes SET parent = NULL WHERE uuid = ?"#,
-        [&note_id.0.to_string()],
-      )?;
-      txn.execute(
-        "DELETE FROM Children WHERE child = ?",
-        [note_id.0.to_string()],
-      )?;
-    } else {
-      if !Self::note_exists_conn(&txn, parent.unwrap())? {
-        return Err(ShizenError::NoSuchNote(parent.unwrap().clone()));
-      }
-
-      if Self::is_descendent_of(&txn, note_id, parent.unwrap())? {
-        return Err(ShizenError::ParentCircularReference(
-          parent.unwrap().clone(),
-          note_id.clone(),
-        ));
-      }
-
-      txn.execute(
-        "UPDATE Notes SET parent = ? WHERE uuid = ?",
-        [parent.unwrap().0.to_string(), note_id.0.to_string()],
-      )?;
-      txn.execute(
-        "INSERT INTO Children (parent, child) VALUES (?, ?)",
-        [parent.unwrap().0.to_string(), note_id.0.to_string()],
-      )?;
-    }
+    Self::change_parent_txn(&txn, note_id, parent)?;
 
     txn.commit()?;
     Ok(())
@@ -599,36 +734,7 @@ impl TodoStorage for RusqliteStorage {
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
-    if !Self::note_exists_conn(&txn, note_id)? {
-      return Err(ShizenError::NoSuchNote(note_id.clone()));
-    }
-
-    if !Self::note_exists_conn(&txn, blocked_note)? {
-      return Err(ShizenError::NoSuchNote(blocked_note.clone()));
-    }
-
-    Self::insert_mutations(
-      &txn,
-      &[Actions::AddDependency {
-        blocker: note_id.clone(),
-        blockee: blocked_note.clone(),
-      }],
-    )?;
-
-    if Self::note_blocks_other_note(&txn, blocked_note, note_id)? {
-      // This would create a circular dependency.
-      return Err(ShizenError::DependencyCircularReference(
-        note_id.clone(),
-        blocked_note.clone(),
-      ));
-    }
-
-    trace!("Adding dependency {:?} blocks {:?}", note_id, blocked_note);
-
-    txn.execute(
-      "INSERT INTO Dependencies (blocker, blockee) VALUES (?, ?)",
-      [note_id.0.to_string(), blocked_note.0.to_string()],
-    )?;
+    Self::add_dep_txn(&txn, note_id, blocked_note)?;
 
     txn.commit()?;
     Ok(())
@@ -641,38 +747,7 @@ impl TodoStorage for RusqliteStorage {
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
-    if !Self::note_exists_conn(&txn, note_id)? {
-      return Err(ShizenError::NoSuchNote(note_id.clone()));
-    }
-
-    if !Self::note_exists_conn(&txn, blocked_note)? {
-      return Err(ShizenError::NoSuchNote(blocked_note.clone()));
-    }
-
-    Self::insert_mutations(
-      &txn,
-      &[Actions::RemoveDependency {
-        blocker: note_id.clone(),
-        blockee: blocked_note.clone(),
-      }],
-    )?;
-
-    let dep_exists: bool = txn.query_row(
-      "SELECT COUNT(*) FROM Dependencies WHERE blocker = ? and blockee = ?",
-      [note_id.0.to_string(), blocked_note.0.to_string()],
-      |r| r.get(0),
-    )?;
-    if !dep_exists {
-      return Err(ShizenError::NoSuchDependency(
-        note_id.clone(),
-        blocked_note.clone(),
-      ));
-    }
-
-    txn.execute(
-      "DELETE FROM Dependencies WHERE blocker = ? AND blockee = ?",
-      [note_id.0.to_string(), blocked_note.0.to_string()],
-    )?;
+    Self::remove_dep_txn(&txn, note_id, blocked_note)?;
 
     txn.commit()?;
     Ok(())
@@ -685,27 +760,7 @@ impl TodoStorage for RusqliteStorage {
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
-    let old_note = Self::load_note_conn(&txn, note_id)?;
-
-    // TODO can i do this more efficently and not recalculate the CTE?
-    txn
-      .prepare(&Self::get_all_descendents_cte(
-        "DELETE FROM Notes WHERE uuid IN (SELECT child FROM NoteHeirarchy);",
-      ))?
-      .execute([note_id.0.to_string()])?;
-    txn
-      .prepare(&Self::get_all_descendents_cte(
-        "DELETE FROM Children WHERE child IN (SELECT child FROM NoteHeirarchy);",
-      ))?
-      .execute([note_id.0.to_string()])?;
-
-    txn.execute("DELETE FROM Notes WHERE uuid = ?", [note_id.0.to_string()])?;
-    txn.execute(
-      "DELETE FROM Children WHERE child = ?1 OR parent = ?1",
-      [note_id.0.to_string()],
-    )?;
-
-    Self::insert_mutations(&txn, &[Actions::DeleteNote { note: old_note }])?;
+    Self::delete_note_txn(&txn, note_id)?;
 
     txn.commit()?;
 
@@ -733,7 +788,7 @@ impl TodoStorage for RusqliteStorage {
     )?;
 
     match undo_action {
-      Actions::CreateNote { id, parent } => {
+      Actions::CreateNote { id, parent, .. } => {
         txn.execute("DELETE FROM Notes WHERE uuid = ?", [id.0.to_string()])?;
         if parent.is_some() {
           txn.execute("DELETE FROM Children WHERE child = ?", [id.0.to_string()])?;
@@ -828,8 +883,72 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn redo(&mut self) -> ShizenResult<()> {
-    // TODO in order to do this efficiently, lets just make all the functions we use to do the original op optionally take in a "save undo" arg.
-    todo!()
+    let mut conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+    let txn = conn.transaction()?;
+
+    let (id_to_remove, redo_action) = txn.query_row_and_then(
+      "SELECT id, action_json FROM RedoMutations ORDER BY id DESC LIMIT 1",
+      [],
+      |r| -> ShizenResult<_> {
+        let id_to_remove: u32 = r.get(0)?;
+        let redo_action_json: String = r.get(1)?;
+        let redo_action: Actions =
+          serde_json::from_str(&redo_action_json).map_err(|_| ShizenError::SerdeError)?;
+
+        return Ok((id_to_remove, redo_action));
+      },
+    )?;
+
+    match redo_action {
+      Actions::CreateNote {
+        id,
+        parent,
+        title,
+        description,
+      } => {
+        Self::create_new_note_txn(
+          &txn,
+          Some(id.0),
+          &title,
+          description.as_ref().map(|x| x.as_str()),
+          parent.as_ref(),
+        )?;
+      }
+      Actions::UpdateTitle { id, old_title, .. } => {
+        Self::update_title_txn(&txn, &id, &old_title)?;
+      }
+      Actions::UpdateDescription {
+        id,
+        old_description,
+        ..
+      } => {
+        Self::update_description_txn(&txn, &id, old_description.as_ref().map(|s| s.as_str()))?;
+      }
+      Actions::ChangeParent {
+        id,
+        old_parent,
+        new_parent,
+      } => {
+        Self::change_parent_txn(&txn, &id, old_parent.as_ref())?;
+      }
+      Actions::AddDependency { blocker, blockee } => {
+        Self::add_dep_txn(&txn, &blocker, &blockee)?;
+      }
+      Actions::RemoveDependency { blocker, blockee } => {
+        Self::remove_dep_txn(&txn, &blocker, &blockee)?;
+      }
+      Actions::DeleteNote { note } => {
+        Self::delete_note_txn(&txn, &note.id)?;
+      }
+    }
+
+    txn.execute("DELETE FROM RedoMutations WHERE id = ?", [id_to_remove])?;
+
+    txn.commit()?;
+    Ok(())
   }
 }
 
@@ -1213,5 +1332,6 @@ mod test {
     assert!(readback_picard.is_err());
   }
 
+  // TODO tests for redo
   // TODO tests for update undo.
 }

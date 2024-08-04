@@ -151,7 +151,7 @@ fn main() {
         .expect("error adding dependency");
     }
     Commands::Undo => database.undo().expect("Failed to undo"),
-    Commands::Redo => todo!("Not yet implemented"),
+    Commands::Redo => database.redo().expect("Failed to redo"),
   }
 }
 
