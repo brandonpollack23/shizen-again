@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use dioxus::prelude::*;
+use libshizen::{storage::TodoStorage, DefaultStorage};
 use shizen_dioxus_core::App;
 use tracing::{info, Level};
 
@@ -33,9 +34,11 @@ fn DesktopApp() -> Element {
       info!("New Database created");
     }
 
-    let db = libshizen::DefaultStorage::open(Some(&default_storage_path.into()))
-      .expect("could not open db");
-    db
+    let db: Box<dyn TodoStorage> = Box::new(
+      DefaultStorage::open(Some(&default_storage_path.into())).expect("could not open db"),
+    );
+
+    return Signal::new(db);
   });
 
   rsx! {

@@ -150,10 +150,15 @@ fn main() {
 
 fn format_note(note: &Note) -> String {
   format!(
-    "{} -- ({})\n  {}\n  Blocking: {}\n  Blocked By: {}",
+    "{} -- ({})\n  {}\n  Parent: {}\n  Blocking: {}\n  Blocked By: {}",
     note.title,
     note.id,
     note.description.clone().unwrap_or("---".to_string()),
+    note
+      .parent_id
+      .as_ref()
+      .map(|p| p.0.to_string())
+      .unwrap_or("None".to_string()),
     note
       .notes_this_blocks
       .iter()
