@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS Mutations (
   action_json TEXT NOT NULL
 );
 
+-- TODO clear in maintain method.
+CREATE TABLE IF NOT EXISTS RedoMutations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action_json TEXT NOT NULL
+);
+
 CREATE VIEW IF NOT EXISTS FullyQualifiedNotes AS 
 SELECT 
   uuid,

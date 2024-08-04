@@ -33,4 +33,6 @@ pub enum ShizenError {
   NoSuchDependency(NoteId, NoteId),
   #[error("Could not obtain lock for database")]
   CouldNotLockDatabase,
+  #[error("Serialization/deserialization error")]
+  SerdeError,
 }

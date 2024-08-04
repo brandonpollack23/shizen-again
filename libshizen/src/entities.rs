@@ -78,6 +78,6 @@ pub(crate) enum Actions {
     blockee: NoteId,
   },
   DeleteNote {
-    id: Note,
+    note: Note,
   },
 }
