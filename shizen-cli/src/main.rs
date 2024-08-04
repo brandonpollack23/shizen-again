@@ -36,7 +36,12 @@ enum Commands {
   #[command(visible_alias = "up")]
   Update(UpdateArguments),
   #[command(visible_alias = "dep")]
-  AddDependency { from: String, to: String },
+  AddDependency {
+    from: String,
+    to: String,
+  },
+  Undo,
+  Redo,
 }
 
 #[derive(Args, Debug, PartialEq, Eq)]
@@ -145,6 +150,8 @@ fn main() {
         .add_blocked_note(&from, &to)
         .expect("error adding dependency");
     }
+    Commands::Undo => database.undo().expect("Failed to undo"),
+    Commands::Redo => todo!("Not yet implemented"),
   }
 }
 
