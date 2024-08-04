@@ -38,6 +38,7 @@ CREATE INDEX IF NOT EXISTS BlockeeToBlockerIndex
 ON Dependencies (blockee);
 
 CREATE TABLE IF NOT EXISTS Mutations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   action_json TEXT NOT NULL
 );
 

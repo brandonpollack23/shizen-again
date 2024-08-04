@@ -382,7 +382,13 @@ impl TodoStorage for RusqliteStorage {
       }
     }
 
-    Self::insert_mutations(&txn, &[Actions::CreateNote { id: NoteId(uuid) }])?;
+    Self::insert_mutations(
+      &txn,
+      &[Actions::CreateNote {
+        id: NoteId(uuid),
+        parent: parent_id.cloned(),
+      }],
+    )?;
 
     txn.commit()?;
 
@@ -727,8 +733,11 @@ impl TodoStorage for RusqliteStorage {
     )?;
 
     match undo_action {
-      Actions::CreateNote { id } => {
+      Actions::CreateNote { id, parent } => {
         txn.execute("DELETE FROM Notes WHERE uuid = ?", [id.0.to_string()])?;
+        if parent.is_some() {
+          txn.execute("DELETE FROM Children WHERE child = ?", [id.0.to_string()])?;
+        }
       }
       Actions::UpdateTitle { id, old_title, .. } => {
         txn.execute(
@@ -765,13 +774,13 @@ impl TodoStorage for RusqliteStorage {
       }
       Actions::AddDependency { blocker, blockee } => {
         txn.execute(
-          "INSERT INTO Dependencies (blocker, blockee) VALUES (?, ?)",
+          "DELETE FROM Dependencies WHERE blocker = ? and blockee = ?",
           (blocker.0.to_string(), blockee.0.to_string()),
         )?;
       }
       Actions::RemoveDependency { blocker, blockee } => {
         txn.execute(
-          "DELETE FROM Dependencies WHERE blocker = ? and blockee = ?",
+          "INSERT INTO Dependencies (blocker, blockee) VALUES (?, ?)",
           (blocker.0.to_string(), blockee.0.to_string()),
         )?;
       }
@@ -811,9 +820,10 @@ impl TodoStorage for RusqliteStorage {
       }
     }
 
-    txn.execute("REMOVE FROM Mutations WHERE id = ?", [id_to_remove])?;
+    txn.execute("DELETE FROM Mutations WHERE id = ?", [id_to_remove])?;
     Self::insert_redo_mutations_json(&txn, &[undo_action_json])?;
 
+    txn.commit()?;
     Ok(())
   }
 
@@ -1123,4 +1133,85 @@ mod test {
     s.remove_blocked_note(&wesley.id, &bev.id).unwrap();
     s.add_blocked_note(&picard_note.id, &wesley.id).unwrap();
   }
+
+  #[test]
+  #[traced_test]
+  fn undo_create() {
+    let mut s = RusqliteStorage::open(None).unwrap();
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+    let riker = s
+      .create_new_note(
+        "Riker",
+        "Number One of the enterprise".into(),
+        Some(&picard_note.id),
+      )
+      .unwrap();
+    let bev = s
+      .create_new_note("Beverly Crusher", "Capable and attractive doc".into(), None)
+      .unwrap();
+    s.add_blocked_note(&bev.id, &picard_note.id).unwrap();
+
+    let before_undo_picard = s.load_note(&picard_note.id).unwrap();
+    let before_undo_riker = s.load_note(&riker.id).unwrap();
+    let before_undo_bev = s.load_note(&bev.id).unwrap();
+
+    // Undo dep
+    s.undo().unwrap();
+
+    let readback_picard = s.load_note(&picard_note.id).unwrap();
+    let expected_picard = Note {
+      notes_blocking_this: vec![],
+      notes_this_blocks: vec![],
+      ..before_undo_picard.clone()
+    };
+    let readback_riker = s.load_note(&riker.id).unwrap();
+    let expected_riker = Note {
+      ..before_undo_riker.clone()
+    };
+    let readback_bev = s.load_note(&bev.id).unwrap();
+    let expected_bev = Note {
+      notes_this_blocks: vec![],
+      ..before_undo_bev.clone()
+    };
+    assert_eq!(readback_picard, expected_picard);
+    assert_eq!(readback_riker, expected_riker);
+    assert_eq!(readback_bev, expected_bev);
+
+    // Undo create bev
+    s.undo().unwrap();
+
+    let readback_picard = s.load_note(&picard_note.id).unwrap();
+    let expected_picard = Note {
+      notes_blocking_this: vec![],
+      notes_this_blocks: vec![],
+      ..before_undo_picard.clone()
+    };
+    let readback_bev = s.load_note(&bev.id);
+    assert_eq!(readback_picard, expected_picard);
+    assert!(readback_bev.is_err());
+
+    // Undo create riker
+    s.undo().unwrap();
+
+    let readback_picard = s.load_note(&picard_note.id).unwrap();
+    let expected_picard = Note {
+      notes_blocking_this: vec![],
+      notes_this_blocks: vec![],
+      children_ids: vec![],
+      ..before_undo_picard.clone()
+    };
+    let readback_riker = s.load_note(&riker.id);
+    assert!(readback_riker.is_err());
+    assert_eq!(expected_picard, readback_picard);
+
+    // Undo create picard
+    s.undo().unwrap();
+
+    let readback_picard = s.load_note(&picard_note.id);
+    assert!(readback_picard.is_err());
+  }
+
+  // TODO tests for update undo.
 }

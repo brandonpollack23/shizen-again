@@ -54,6 +54,7 @@ impl From<PeerId> for Uuid {
 pub(crate) enum Actions {
   CreateNote {
     id: NoteId,
+    parent: Option<NoteId>,
   },
   UpdateTitle {
     id: NoteId,
