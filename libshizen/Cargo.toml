@@ -3,9 +3,15 @@ name = "libshizen"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+web = ["uuid/js"]
+
 [dependencies]
 # TODO use workspace for all.
-rusqlite = { version = "0.32.0", features = ["bundled-full"] }
+rusqlite = { version = "0.32.0", features = [
+  "bundled-full",
+  "wasm32-wasi-vfs",
+] }
 thiserror = "1.0.63"
 tracing = "0.1.40"
 uuid = { version = "1.10.0", features = ["v4", "fast-rng"] }

@@ -1,0 +1,13 @@
+[package]
+name = "shizen-dioxus-web"
+version = "0.1.0"
+authors = ["Brandon Pollack <brandonpollack23@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+dioxus = { version = "0.5", features = ["web", "router"] }
+dioxus-logger = "0.5.1"
+libshizen = { version = "0.1.0", path = "../libshizen", features = ["web"] }
+shizen-dioxus-core = { version = "0.1.0", path = "../shizen-dioxus-core", features = [
+  "web",
+] }

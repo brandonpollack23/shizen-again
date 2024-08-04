@@ -6,4 +6,5 @@ members = [
   "shizen-cli",
   "shizen-dioxus-core",
   "shizen-dioxus-desktop",
+  "shizen-dioxus-web",
 ]
