@@ -7,6 +7,8 @@
 use dioxus::prelude::*;
 use libshizen::{entities::Note, storage::TodoStorage};
 
+const _: &str = manganis::mg!(file("public/tailwind.css"));
+
 #[derive(Clone, Routable, Debug, PartialEq)]
 enum Route {
   #[route("/")]

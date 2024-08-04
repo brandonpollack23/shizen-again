@@ -9,3 +9,4 @@ dioxus = { version = "0.5", features = ["desktop", "router"] }
 tracing = "0.1.40"
 dioxus-logger = "0.5.1"
 libshizen = { version = "0.1.0", path = "../libshizen" }
+manganis = "0.2.2"
