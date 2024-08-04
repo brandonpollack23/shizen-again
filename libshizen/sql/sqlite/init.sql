@@ -37,6 +37,10 @@ ON Dependencies (blocker);
 CREATE INDEX IF NOT EXISTS BlockeeToBlockerIndex
 ON Dependencies (blockee);
 
+CREATE TABLE IF NOT EXISTS Mutations (
+  action_json TEXT NOT NULL
+);
+
 CREATE VIEW IF NOT EXISTS FullyQualifiedNotes AS 
 SELECT 
   uuid,

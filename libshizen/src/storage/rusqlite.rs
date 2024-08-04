@@ -1,13 +1,11 @@
 //! Sqlite storage engine using rusqlite.
-use std::borrow::BorrowMut;
-use std::cell::RefCell;
 use std::sync::{Arc, RwLock};
 
 use rusqlite::{Connection, Row};
 use tracing::{info, trace};
 use uuid::Uuid;
 
-use crate::entities::{Note, NoteId};
+use crate::entities::{Actions, Note, NoteId};
 use crate::storage::TodoStorage;
 use crate::{ShizenError, ShizenResult};
 
@@ -67,6 +65,14 @@ impl RusqliteStorage {
     Ok(RusqliteStorage {
       conn: Arc::new(RwLock::new(conn)),
     })
+  }
+
+  fn load_note_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<Note> {
+    Ok(conn.query_row_and_then::<Note, ShizenError, _, _>(
+      "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes WHERE uuid = ?",
+      [note_id.0.to_string()],
+      Self::row_to_note
+    )?)
   }
 
   fn note_exists_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<bool> {
@@ -304,6 +310,18 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
         .collect::<ShizenResult<Vec<_>>>()?,
     )
   }
+
+  fn insert_mutations(conn: &Connection, actions: &[Actions]) -> ShizenResult<()> {
+    for action in actions {
+      let action_json = serde_json::to_string(&action).unwrap();
+      conn.execute(
+        "INSERT INTO Mutations (action_json) VALUES (?)",
+        [action_json],
+      )?;
+    }
+
+    Ok(())
+  }
 }
 
 impl TodoStorage for RusqliteStorage {
@@ -341,6 +359,8 @@ impl TodoStorage for RusqliteStorage {
         return Err(ShizenError::UnexpectedMutationResult(1, i));
       }
     }
+
+    Self::insert_mutations(&txn, &[Actions::CreateNote { id: NoteId(uuid) }])?;
 
     txn.commit()?;
 
@@ -389,17 +409,11 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note> {
-    let mut conn = self
+    let conn = self
       .conn
-      .write()
+      .read()
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
-    let txn = conn.transaction()?;
-
-    Ok(txn.query_row_and_then::<Note, ShizenError, _, _>(
-      "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes WHERE uuid = ?",
-      [note_id.0.to_string()],
-      Self::row_to_note
-    )?)
+    Self::load_note_conn(&conn, note_id)
   }
 
   fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool> {
@@ -427,14 +441,30 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
-    let conn = self
+    let mut conn = self
       .conn
-      .read()
+      .write()
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
-    conn.execute(
+
+    let txn = conn.transaction()?;
+
+    let old_note = Self::load_note_conn(&txn, note_id)?;
+
+    txn.execute(
       r#"UPDATE Notes SET title = ? WHERE uuid = ?"#,
       [title, &note_id.0.to_string()],
     )?;
+
+    Self::insert_mutations(
+      &txn,
+      &[Actions::UpdateTitle {
+        id: note_id.clone(),
+        new_title: title.to_string(),
+        old_title: old_note.title,
+      }],
+    )?;
+
+    txn.commit();
 
     Ok(())
   }
@@ -444,12 +474,24 @@ impl TodoStorage for RusqliteStorage {
     note_id: &NoteId,
     description: Option<&str>,
   ) -> ShizenResult<()> {
-    let conn = self
+    let mut conn = self
       .conn
-      .read()
+      .write()
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+    let txn = conn.transaction()?;
+
+    let old_note = Self::load_note_conn(&txn, note_id)?;
+    Self::insert_mutations(
+      &txn,
+      &[Actions::UpdateDescription {
+        id: note_id.clone(),
+        old_description: old_note.description,
+        new_description: description.map(|d| d.to_string()),
+      }],
+    );
+
     if description.is_none() {
-      conn.execute(
+      txn.execute(
         r#"UPDATE Notes SET description = NULL WHERE uuid = ?"#,
         [&note_id.0.to_string()],
       )?;
@@ -457,14 +499,17 @@ impl TodoStorage for RusqliteStorage {
       return Ok(());
     }
 
-    conn.execute(
+    txn.execute(
       r#"UPDATE Notes SET description = ? WHERE uuid = ?"#,
       (description.unwrap(), &note_id.0.to_string()),
     )?;
 
+    txn.commit()?;
+
     Ok(())
   }
 
+  // TODO HERE I AM
   fn update_parent(&mut self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()> {
     let mut conn = self
       .conn

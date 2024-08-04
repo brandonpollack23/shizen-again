@@ -31,6 +31,9 @@ pub trait TodoStorage {
   fn add_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
   fn remove_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
 
+  fn undo(&mut self) -> ShizenResult<()>;
+  fn redo(&mut self) -> ShizenResult<()>;
+
   // Delete
   fn delete_note(&mut self, note_id: &NoteId) -> crate::ShizenResult<()>;
 }
