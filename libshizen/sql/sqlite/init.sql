@@ -49,15 +49,16 @@ CREATE TABLE IF NOT EXISTS RedoMutations (
 
 CREATE VIEW IF NOT EXISTS FullyQualifiedNotes AS 
 SELECT 
-  uuid,
-  title,
-  description,
-  parent,
-  -- TODO children
+  n.uuid,
+  n.title,
+  n.description,
+  parent.parent,
   GROUP_CONCAT(blocks.blockee, ',') AS blocks,
-  GROUP_CONCAT(blocked.blocker, ',') AS blocked
+  GROUP_CONCAT(blocked.blocker, ',') AS blocked,
+  GROUP_CONCAT(children.child, ',') AS children
 FROM Notes AS n
-LEFT JOIN Children AS c ON n.uuid = c.child
+LEFT JOIN Children AS parent ON n.uuid = parent.child
+LEFT JOIN Children AS children ON n.uuid = children.parent
 LEFT JOIN Dependencies AS blocks ON n.uuid = blocks.blocker
 LEFT JOIN Dependencies AS blocked ON n.uuid = blocked.blockee
-GROUP BY uuid, title, description, parent;
+GROUP BY n.uuid, n.title, n.description, children.parent;

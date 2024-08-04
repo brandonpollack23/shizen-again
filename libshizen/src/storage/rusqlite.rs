@@ -69,7 +69,7 @@ impl RusqliteStorage {
 
   fn load_note_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<Note> {
     Ok(conn.query_row_and_then::<Note, ShizenError, _, _>(
-      "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes WHERE uuid = ?",
+      "SELECT uuid, title, description, parent, blocks, blocked, children FROM FullyQualifiedNotes WHERE uuid = ?",
       [note_id.0.to_string()],
       Self::row_to_note
     )?)
@@ -276,11 +276,22 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       })
       .unwrap_or(Ok(Vec::new()))?;
 
+    let children_ids = row
+      .get::<_, Option<String>>(6)?
+      .map(|b| {
+        b.split(',')
+          .map(Uuid::parse_str)
+          .map(|r| r.map_err::<ShizenError, _>(Into::into).map(NoteId))
+          .collect::<ShizenResult<Vec<_>>>()
+      })
+      .unwrap_or(Ok(Vec::new()))?;
+
     Ok(Note {
       id: NoteId(uuid),
       title: row.get(1)?,
       description: row.get(2)?,
       parent_id: parent_uuid.map(NoteId),
+      children_ids,
       notes_this_blocks,
       notes_blocking_this,
     })
@@ -380,6 +391,7 @@ impl TodoStorage for RusqliteStorage {
       title: title.to_string(),
       description: description.map(|s| s.to_string()),
       parent_id: parent_id.cloned(),
+      children_ids: Vec::new(),
       notes_this_blocks: Vec::new(),
       notes_blocking_this: Vec::new(),
     })
@@ -391,7 +403,7 @@ impl TodoStorage for RusqliteStorage {
       .read()
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let mut stmt = conn.prepare(
-      "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes",
+      "SELECT uuid, title, description, parent, blocks, blocked, children FROM FullyQualifiedNotes",
     )?;
 
     let result: ShizenResult<Vec<_>> = stmt
@@ -408,7 +420,7 @@ impl TodoStorage for RusqliteStorage {
       .read()
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let mut stmt = conn.prepare(
-      "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes WHERE blocked IS NULL"
+      "SELECT uuid, title, description, parent, blocks, blocked, children FROM FullyQualifiedNotes WHERE blocked IS NULL"
     )?;
 
     let result: ShizenResult<Vec<_>> = stmt
@@ -475,7 +487,7 @@ impl TodoStorage for RusqliteStorage {
       }],
     )?;
 
-    txn.commit();
+    txn.commit()?;
 
     Ok(())
   }
@@ -499,21 +511,19 @@ impl TodoStorage for RusqliteStorage {
         old_description: old_description,
         new_description: description.map(|d| d.to_string()),
       }],
-    );
+    )?;
 
     if description.is_none() {
       txn.execute(
         r#"UPDATE Notes SET description = NULL WHERE uuid = ?"#,
         [&note_id.0.to_string()],
       )?;
-
-      return Ok(());
+    } else {
+      txn.execute(
+        r#"UPDATE Notes SET description = ? WHERE uuid = ?"#,
+        (description.unwrap(), &note_id.0.to_string()),
+      )?;
     }
-
-    txn.execute(
-      r#"UPDATE Notes SET description = ? WHERE uuid = ?"#,
-      (description.unwrap(), &note_id.0.to_string()),
-    )?;
 
     txn.commit()?;
 
@@ -539,7 +549,7 @@ impl TodoStorage for RusqliteStorage {
         old_parent,
         new_parent: parent.map(Clone::clone),
       }],
-    );
+    )?;
 
     if parent.is_none() {
       txn.execute(
@@ -550,29 +560,27 @@ impl TodoStorage for RusqliteStorage {
         "DELETE FROM Children WHERE child = ?",
         [note_id.0.to_string()],
       )?;
+    } else {
+      if !Self::note_exists_conn(&txn, parent.unwrap())? {
+        return Err(ShizenError::NoSuchNote(parent.unwrap().clone()));
+      }
 
-      return Ok(());
+      if Self::is_descendent_of(&txn, note_id, parent.unwrap())? {
+        return Err(ShizenError::ParentCircularReference(
+          parent.unwrap().clone(),
+          note_id.clone(),
+        ));
+      }
+
+      txn.execute(
+        "UPDATE Notes SET parent = ? WHERE uuid = ?",
+        [parent.unwrap().0.to_string(), note_id.0.to_string()],
+      )?;
+      txn.execute(
+        "INSERT INTO Children (parent, child) VALUES (?, ?)",
+        [parent.unwrap().0.to_string(), note_id.0.to_string()],
+      )?;
     }
-
-    if !Self::note_exists_conn(&txn, parent.unwrap())? {
-      return Err(ShizenError::NoSuchNote(parent.unwrap().clone()));
-    }
-
-    if Self::is_descendent_of(&txn, note_id, parent.unwrap())? {
-      return Err(ShizenError::ParentCircularReference(
-        parent.unwrap().clone(),
-        note_id.clone(),
-      ));
-    }
-
-    txn.execute(
-      "UPDATE Notes SET parent = ? WHERE uuid = ?",
-      [parent.unwrap().0.to_string(), note_id.0.to_string()],
-    )?;
-    txn.execute(
-      "INSERT INTO Children (parent, child) VALUES (?, ?)",
-      [parent.unwrap().0.to_string(), note_id.0.to_string()],
-    )?;
 
     txn.commit()?;
     Ok(())
@@ -599,7 +607,7 @@ impl TodoStorage for RusqliteStorage {
         blocker: note_id.clone(),
         blockee: blocked_note.clone(),
       }],
-    );
+    )?;
 
     if Self::note_blocks_other_note(&txn, blocked_note, note_id)? {
       // This would create a circular dependency.
@@ -641,7 +649,7 @@ impl TodoStorage for RusqliteStorage {
         blocker: note_id.clone(),
         blockee: blocked_note.clone(),
       }],
-    );
+    )?;
 
     let dep_exists: bool = txn.query_row(
       "SELECT COUNT(*) FROM Dependencies WHERE blocker = ? and blockee = ?",
@@ -671,6 +679,8 @@ impl TodoStorage for RusqliteStorage {
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
+    let old_note = Self::load_note_conn(&txn, note_id)?;
+
     // TODO can i do this more efficently and not recalculate the CTE?
     txn
       .prepare(&Self::get_all_descendents_cte(
@@ -689,8 +699,7 @@ impl TodoStorage for RusqliteStorage {
       [note_id.0.to_string()],
     )?;
 
-    let old_note = Self::load_note_conn(&txn, note_id)?;
-    Self::insert_mutations(&txn, &[Actions::DeleteNote { note: old_note }]);
+    Self::insert_mutations(&txn, &[Actions::DeleteNote { note: old_note }])?;
 
     txn.commit()?;
 
@@ -772,12 +781,17 @@ impl TodoStorage for RusqliteStorage {
           (note.id.0.to_string(), note.title, note.description),
         )?;
 
-        // TODO BUG since i do not store children they will not be restored, must fix.
-
         if note.parent_id.is_some() {
           txn.execute(
             "INSERT INTO Children (parent, child) VALUES (?, ?)",
             (note.parent_id.unwrap().0.to_string(), note.id.0.to_string()),
+          )?;
+        }
+
+        for child in &note.children_ids {
+          txn.execute(
+            "INSERT INTO Children (parent, child) VALUES (?, ?)",
+            (note.id.0.to_string(), child.0.to_string()),
           )?;
         }
 
@@ -797,6 +811,7 @@ impl TodoStorage for RusqliteStorage {
       }
     }
 
+    txn.execute("REMOVE FROM Mutations WHERE id = ?", [id_to_remove])?;
     Self::insert_redo_mutations_json(&txn, &[undo_action_json])?;
 
     Ok(())
@@ -875,8 +890,12 @@ mod test {
       )
       .unwrap();
 
-    assert_eq!(picard_note, s.load_note(&picard_note.id).unwrap());
-    assert_eq!(picard_note, s.load_note(&riker.parent_id.unwrap()).unwrap());
+    let expected = Note {
+      children_ids: vec![riker.id.clone()],
+      ..picard_note.clone()
+    };
+    assert_eq!(expected, s.load_note(&picard_note.id).unwrap());
+    assert_eq!(expected, s.load_note(&riker.parent_id.unwrap()).unwrap());
   }
 
   #[test]
@@ -964,13 +983,10 @@ mod test {
 
     trace!("{:#?}", s.load_all_notes().unwrap());
 
-    assert!(
-      RusqliteStorage::is_descendent_of(&s.conn.borrow(), &picard_note.id, &riker.id).unwrap()
-    );
-    assert!(
-      RusqliteStorage::is_descendent_of(&s.conn.borrow(), &picard_note.id, &worf.id).unwrap()
-    );
-    assert!(RusqliteStorage::is_descendent_of(&s.conn.borrow(), &riker.id, &worf.id).unwrap());
+    let conn = s.conn.read().unwrap();
+    assert!(RusqliteStorage::is_descendent_of(&conn, &picard_note.id, &riker.id).unwrap());
+    assert!(RusqliteStorage::is_descendent_of(&conn, &picard_note.id, &worf.id).unwrap());
+    assert!(RusqliteStorage::is_descendent_of(&conn, &riker.id, &worf.id).unwrap());
   }
 
   #[test]
