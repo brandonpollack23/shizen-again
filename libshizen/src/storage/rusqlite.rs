@@ -489,7 +489,7 @@ impl TodoStorage for RusqliteStorage {
       &[Actions::UpdateTitle {
         id: note_id.clone(),
         new_title: title.to_string(),
-        old_title: old_title,
+        old_title,
       }],
     )?;
 
@@ -514,7 +514,7 @@ impl TodoStorage for RusqliteStorage {
       &txn,
       &[Actions::UpdateDescription {
         id: note_id.clone(),
-        old_description: old_description,
+        old_description,
         new_description: description.map(|d| d.to_string()),
       }],
     )?;
@@ -1121,14 +1121,14 @@ mod test {
       .unwrap();
 
     s.add_blocked_note(&bev.id, &picard_note.id).unwrap();
-    let r = s.add_blocked_note(&picard_note.id, &bev.id);
+    s.add_blocked_note(&picard_note.id, &bev.id).unwrap();
 
     let wesley = s
       .create_new_note("Wesley Crusher", "Kid".into(), None)
       .unwrap();
 
     s.add_blocked_note(&wesley.id, &bev.id).unwrap();
-    let r = s.add_blocked_note(&picard_note.id, &wesley.id);
+    s.add_blocked_note(&picard_note.id, &wesley.id).unwrap();
 
     s.remove_blocked_note(&wesley.id, &bev.id).unwrap();
     s.add_blocked_note(&picard_note.id, &wesley.id).unwrap();
