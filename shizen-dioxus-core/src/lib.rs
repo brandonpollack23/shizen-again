@@ -11,7 +11,7 @@ const _: &str = manganis::mg!(file("public/tailwind.css"));
 
 #[derive(Clone, Routable, Debug, PartialEq)]
 enum Route {
-  #[route("/:show_blocked")]
+  #[route("/")]
   NoteListView { show_blocked: bool },
 }
 
