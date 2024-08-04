@@ -1,3 +1,7 @@
+//! The core shizen shared UI.
+//!
+//! The actual shizen database and other platform specific functionality are provided by each
+//! individual app (Desktop etc).
 #![allow(non_snake_case)]
 
 use dioxus::prelude::*;
@@ -5,9 +9,7 @@ use dioxus::prelude::*;
 #[derive(Clone, Routable, Debug, PartialEq)]
 enum Route {
   #[route("/")]
-  Home {},
-  #[route("/blog/:id")]
-  Blog { id: i32 },
+  NoteListView { show_blocked: bool },
 }
 
 #[component]
@@ -18,28 +20,8 @@ pub fn App() -> Element {
 }
 
 #[component]
-fn Blog(id: i32) -> Element {
+fn NoteListView(show_blocked: bool) -> Element {
   rsx! {
-      Link { to: Route::Home {}, "Go to counter" }
-      "Blog post {id}"
-  }
-}
-
-#[component]
-fn Home() -> Element {
-  let mut count = use_signal(|| 0);
-
-  rsx! {
-      Link {
-          to: Route::Blog {
-              id: count()
-          },
-          "Go to blog"
-      }
-      div {
-          h1 { "High-Five counter: {count}" }
-          button { onclick: move |_| count += 1, "Up high!" }
-          button { onclick: move |_| count -= 1, "Down low!" }
-      }
+    "Hello Shizen"
   }
 }

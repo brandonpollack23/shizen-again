@@ -31,4 +31,6 @@ pub enum ShizenError {
   /// Blocker (0) -> Blockee (1)
   #[error("There is no such dependency with blocker: {} blockee: {}", .0, .1)]
   NoSuchDependency(NoteId, NoteId),
+  #[error("Could not obtain lock for database")]
+  CouldNotLockDatabase,
 }

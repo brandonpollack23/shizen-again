@@ -1,6 +1,7 @@
 //! Sqlite storage engine using rusqlite.
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
+use std::sync::{Arc, RwLock};
 
 use rusqlite::{Connection, Row};
 use tracing::{info, trace};
@@ -10,8 +11,9 @@ use crate::entities::{Note, NoteId};
 use crate::storage::TodoStorage;
 use crate::{ShizenError, ShizenResult};
 
+#[derive(Clone)]
 pub struct RusqliteStorage {
-  conn: RefCell<Connection>,
+  conn: Arc<RwLock<Connection>>,
 }
 
 impl RusqliteStorage {
@@ -63,7 +65,7 @@ impl RusqliteStorage {
     info!("Database running at version {}", get_schema_version(&conn)?);
 
     Ok(RusqliteStorage {
-      conn: RefCell::new(conn),
+      conn: Arc::new(RwLock::new(conn)),
     })
   }
 
@@ -311,7 +313,10 @@ impl TodoStorage for RusqliteStorage {
     description: Option<&str>,
     parent_id: Option<&NoteId>,
   ) -> ShizenResult<Note> {
-    let mut conn = self.conn.borrow_mut();
+    let mut conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
     if let Some(pid) = parent_id {
@@ -350,7 +355,10 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>> {
-    let conn = self.conn.borrow();
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let mut stmt = conn.prepare(
       "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes",
     )?;
@@ -364,7 +372,10 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn load_all_unblocked_notes(&self) -> ShizenResult<Vec<Note>> {
-    let conn = self.conn.borrow();
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let mut stmt = conn.prepare(
       "SELECT uuid, title, description, parent, blocks, blocked FROM FullyQualifiedNotes WHERE blocked IS NULL"
     )?;
@@ -378,7 +389,10 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note> {
-    let mut conn = self.conn.borrow_mut();
+    let mut conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
     Ok(txn.query_row_and_then::<Note, ShizenError, _, _>(
@@ -389,19 +403,35 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool> {
-    Self::note_exists_conn(&self.conn.borrow(), note_id)
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+    Self::note_exists_conn(&conn, note_id)
   }
 
   fn get_all_descendents(&self, note_id: &NoteId) -> ShizenResult<Vec<Note>> {
-    Self::get_all_descendents(&self.conn.borrow(), note_id)
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+    Self::get_all_descendents(&conn, note_id)
   }
 
   fn get_all_blocked(&self, note_id: &NoteId, recursive: bool) -> ShizenResult<Vec<Note>> {
-    Self::get_all_blocked(&self.conn.borrow(), note_id, recursive)
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+    Self::get_all_blocked(&conn, note_id, recursive)
   }
 
   fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
-    self.conn.borrow().execute(
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+    conn.execute(
       r#"UPDATE Notes SET title = ? WHERE uuid = ?"#,
       [title, &note_id.0.to_string()],
     )?;
@@ -414,8 +444,12 @@ impl TodoStorage for RusqliteStorage {
     note_id: &NoteId,
     description: Option<&str>,
   ) -> ShizenResult<()> {
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     if description.is_none() {
-      self.conn.borrow().execute(
+      conn.execute(
         r#"UPDATE Notes SET description = NULL WHERE uuid = ?"#,
         [&note_id.0.to_string()],
       )?;
@@ -423,7 +457,7 @@ impl TodoStorage for RusqliteStorage {
       return Ok(());
     }
 
-    self.conn.borrow().execute(
+    conn.execute(
       r#"UPDATE Notes SET description = ? WHERE uuid = ?"#,
       (description.unwrap(), &note_id.0.to_string()),
     )?;
@@ -432,7 +466,10 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn update_parent(&mut self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()> {
-    let mut conn = self.conn.borrow_mut();
+    let mut conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
     if !Self::note_exists_conn(&txn, note_id)? {
@@ -477,7 +514,10 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn add_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
-    let mut conn = self.conn.borrow_mut();
+    let mut conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
     if !Self::note_exists_conn(&txn, note_id)? {
@@ -508,7 +548,10 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn remove_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
-    let mut conn = self.conn.borrow_mut();
+    let mut conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
     if !Self::note_exists_conn(&txn, note_id)? {
@@ -541,7 +584,10 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
-    let mut conn = self.conn.borrow_mut();
+    let mut conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
     // TODO can i do this more efficently and not recalculate the CTE?

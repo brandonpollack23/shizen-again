@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 dioxus = { version = "0.5", features = ["router", "router"] }
+libshizen = { version = "0.1.0", path = "../libshizen" }
+tracing = "0.1.40"
