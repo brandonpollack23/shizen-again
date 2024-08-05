@@ -71,3 +71,7 @@ CREATE TABLE IF NOT EXISTS LocalSettings (
   clock INTEGER NOT NULL,
   peer_id STRING NOT NULL
 )
+
+-- TODO next peers and sync.
+-- first just sync peers.
+-- then sync algorithm.
