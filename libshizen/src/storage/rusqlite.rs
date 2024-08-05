@@ -1245,14 +1245,16 @@ mod test {
       .unwrap();
 
     s.add_blocked_note(&bev.id, &picard_note.id).unwrap();
-    s.add_blocked_note(&picard_note.id, &bev.id).unwrap();
+    let r = s.add_blocked_note(&picard_note.id, &bev.id);
+    assert!(matches!(r, Err(_)));
 
     let wesley = s
       .create_new_note("Wesley Crusher", "Kid".into(), None)
       .unwrap();
 
     s.add_blocked_note(&wesley.id, &bev.id).unwrap();
-    s.add_blocked_note(&picard_note.id, &wesley.id).unwrap();
+    let r = s.add_blocked_note(&picard_note.id, &wesley.id);
+    assert!(matches!(r, Err(_)));
 
     s.remove_blocked_note(&wesley.id, &bev.id).unwrap();
     s.add_blocked_note(&picard_note.id, &wesley.id).unwrap();
