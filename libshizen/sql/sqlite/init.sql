@@ -55,7 +55,8 @@ GROUP BY n.uuid, n.title, n.description, children.parent;
 
 CREATE TABLE IF NOT EXISTS Mutations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  action_json TEXT NOT NULL
+  action_json TEXT NOT NULL,
+  clock INTEGER NOT NULL
 );
 
 -- TODO clear in maintain method.

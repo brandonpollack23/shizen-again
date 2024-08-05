@@ -332,24 +332,34 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
   }
 
   fn insert_mutations(conn: &Connection, actions: &[Actions]) -> ShizenResult<()> {
+    let mut clock: usize = Self::get_clock_txn(conn)?;
+
     for action in actions {
       let action_json = serde_json::to_string(&action).unwrap();
       conn.execute(
-        "INSERT INTO Mutations (action_json) VALUES (?)",
-        [action_json],
+        "INSERT INTO Mutations (action_json, clock) VALUES (?, ?)",
+        (action_json, clock),
       )?;
+      clock = clock + 1;
     }
+
+    conn.execute("UPDATE LocalSettings SET clock = ?", [clock])?;
 
     Ok(())
   }
 
   fn insert_redo_mutations_json(conn: &Connection, actions: &[String]) -> ShizenResult<()> {
+    let mut clock: usize = Self::get_clock_txn(conn)?;
+
     for action_json in actions {
       conn.execute(
         "INSERT INTO RedoMutations (action_json) VALUES (?)",
         [action_json],
       )?;
+      clock = clock + 1;
     }
+
+    conn.execute("UPDATE LocalSettings SET clock = ?", [clock])?;
 
     Ok(())
   }
@@ -403,6 +413,12 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       notes_this_blocks: Vec::new(),
       notes_blocking_this: Vec::new(),
     })
+  }
+
+  fn get_clock_txn(txn: &Connection) -> ShizenResult<usize> {
+    let clock: usize =
+      txn.query_row("SELECT clock FROM LocalSettings LIMIT 1", (), |r| r.get(0))?;
+    Ok(clock)
   }
 
   fn update_title_txn(txn: &Connection, note_id: &NoteId, title: &str) -> ShizenResult<()> {
@@ -620,8 +636,8 @@ impl TodoStorage for RusqliteStorage {
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
     let note = Self::create_new_note_txn(&txn, None, title, description, parent_id)?;
-    txn.commit()?;
 
+    txn.commit()?;
     Ok(note)
   }
 
@@ -711,8 +727,7 @@ impl TodoStorage for RusqliteStorage {
       .read()
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
 
-    let clock: usize =
-      conn.query_row("SELECT clock FROM LocalSettings LIMIT 1", (), |r| r.get(0))?;
+    let clock = Self::get_clock_txn(&conn)?;
 
     Ok(clock)
   }
@@ -795,16 +810,18 @@ impl TodoStorage for RusqliteStorage {
       .map_err(|_| ShizenError::CouldNotLockDatabase)?;
     let txn = conn.transaction()?;
 
-    let (id_to_remove, undo_action, undo_action_json) = txn.query_row_and_then(
-      "SELECT id, action_json FROM Mutations ORDER BY id DESC LIMIT 1",
+    let (id_to_remove, undo_action, new_clock, undo_action_json) = txn.query_row_and_then(
+      "SELECT id, action_json, clock FROM Mutations ORDER BY id DESC LIMIT 1",
       [],
       |r| -> ShizenResult<_> {
         let id_to_remove: u32 = r.get(0)?;
         let undo_action_json: String = r.get(1)?;
+        let clock: usize = r.get(2)?;
+
         let undo_action: Actions =
           serde_json::from_str(&undo_action_json).map_err(|_| ShizenError::SerdeError)?;
 
-        return Ok((id_to_remove, undo_action, undo_action_json));
+        return Ok((id_to_remove, undo_action, clock, undo_action_json));
       },
     )?;
 
@@ -898,6 +915,8 @@ impl TodoStorage for RusqliteStorage {
 
     txn.execute("DELETE FROM Mutations WHERE id = ?", [id_to_remove])?;
     Self::insert_redo_mutations_json(&txn, &[undo_action_json])?;
+
+    txn.execute("UPDATE LocalSettings SET clock = ?", [new_clock])?;
 
     txn.commit()?;
     Ok(())
@@ -1294,9 +1313,16 @@ mod test {
   #[traced_test]
   fn undo_create() {
     let mut s = RusqliteStorage::open(None).unwrap();
+
+    let clock = s.get_clock().unwrap();
+    assert_eq!(0, clock);
+
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
+    let clock = s.get_clock().unwrap();
+    assert_eq!(1, clock);
+
     let riker = s
       .create_new_note(
         "Riker",
@@ -1304,10 +1330,18 @@ mod test {
         Some(&picard_note.id),
       )
       .unwrap();
+    let clock = s.get_clock().unwrap();
+    assert_eq!(2, clock);
+
     let bev = s
       .create_new_note("Beverly Crusher", "Capable and attractive doc".into(), None)
       .unwrap();
+    let clock = s.get_clock().unwrap();
+    assert_eq!(3, clock);
+
     s.add_blocked_note(&bev.id, &picard_note.id).unwrap();
+    let clock = s.get_clock().unwrap();
+    assert_eq!(4, clock);
 
     let before_undo_picard = s.load_note(&picard_note.id).unwrap();
     let before_undo_riker = s.load_note(&riker.id).unwrap();
@@ -1315,6 +1349,9 @@ mod test {
 
     // Undo dep
     s.undo().unwrap();
+
+    let clock = s.get_clock().unwrap();
+    assert_eq!(3, clock);
 
     let readback_picard = s.load_note(&picard_note.id).unwrap();
     let expected_picard = Note {
@@ -1338,6 +1375,9 @@ mod test {
     // Undo create bev
     s.undo().unwrap();
 
+    let clock = s.get_clock().unwrap();
+    assert_eq!(2, clock);
+
     let readback_picard = s.load_note(&picard_note.id).unwrap();
     let expected_picard = Note {
       notes_blocking_this: vec![],
@@ -1350,6 +1390,9 @@ mod test {
 
     // Undo create riker
     s.undo().unwrap();
+
+    let clock = s.get_clock().unwrap();
+    assert_eq!(1, clock);
 
     let readback_picard = s.load_note(&picard_note.id).unwrap();
     let expected_picard = Note {
@@ -1365,6 +1408,9 @@ mod test {
     // Undo create picard
     s.undo().unwrap();
 
+    let clock = s.get_clock().unwrap();
+    assert_eq!(0, clock);
+
     let readback_picard = s.load_note(&picard_note.id);
     assert!(readback_picard.is_err());
   }
@@ -1376,6 +1422,33 @@ mod test {
     s.get_peer_id().unwrap();
     let c = s.get_clock().unwrap();
     assert_eq!(c, 0);
+  }
+
+  #[test]
+  #[traced_test]
+  fn clock_increments() {
+    let mut s = RusqliteStorage::open(None).unwrap();
+
+    let clock = s.get_clock().unwrap();
+    assert_eq!(clock, 0);
+
+    let picard_note = s
+      .create_new_note("Picard", "captain of the enterprise".into(), None)
+      .unwrap();
+
+    let clock = s.get_clock().unwrap();
+    assert_eq!(clock, 1);
+
+    let riker = s
+      .create_new_note(
+        "Riker",
+        "Number One of the enterprise".into(),
+        Some(&picard_note.id),
+      )
+      .unwrap();
+
+    let clock = s.get_clock().unwrap();
+    assert_eq!(clock, 2);
   }
 
   // TODO tests for redo
