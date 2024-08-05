@@ -5,7 +5,7 @@ use rusqlite::{Connection, Row};
 use tracing::{info, trace};
 use uuid::Uuid;
 
-use crate::entities::{Actions, Note, NoteId};
+use crate::entities::{Actions, Note, NoteId, PeerId};
 use crate::storage::TodoStorage;
 use crate::{ShizenError, ShizenResult};
 
@@ -61,6 +61,10 @@ impl RusqliteStorage {
     if !database_is_initialized(&conn)? {
       info!("Initializing database...");
       conn.execute_batch(libshizen_sql_init_str())?;
+      conn.execute(
+        "INSERT INTO LocalSettings (clock, peer_id) VALUES (?, ?)",
+        (0, Uuid::new_v4().to_string()),
+      )?;
     }
 
     run_schema_migrations(&conn)?;
@@ -687,6 +691,32 @@ impl TodoStorage for RusqliteStorage {
     Self::get_all_blocked(&conn, note_id, recursive)
   }
 
+  fn get_peer_id(&self) -> ShizenResult<PeerId> {
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+
+    let peer_id_str: String =
+      conn.query_row("SELECT peer_id FROM LocalSettings LIMIT 1", (), |r| {
+        r.get(0)
+      })?;
+
+    Ok(PeerId(Uuid::parse_str(&peer_id_str)?))
+  }
+
+  fn get_clock(&self) -> ShizenResult<usize> {
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+
+    let clock: usize =
+      conn.query_row("SELECT clock FROM LocalSettings LIMIT 1", (), |r| r.get(0))?;
+
+    Ok(clock)
+  }
+
   fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
     let mut conn = self
       .conn
@@ -755,20 +785,6 @@ impl TodoStorage for RusqliteStorage {
     Self::remove_dep_txn(&txn, note_id, blocked_note)?;
 
     txn.commit()?;
-    Ok(())
-  }
-
-  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
-    let mut conn = self
-      .conn
-      .write()
-      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
-    let txn = conn.transaction()?;
-
-    Self::delete_note_txn(&txn, note_id)?;
-
-    txn.commit()?;
-
     Ok(())
   }
 
@@ -955,10 +971,28 @@ impl TodoStorage for RusqliteStorage {
     txn.commit()?;
     Ok(())
   }
+
+  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
+    let mut conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+    let txn = conn.transaction()?;
+
+    Self::delete_note_txn(&txn, note_id)?;
+
+    txn.commit()?;
+
+    Ok(())
+  }
 }
 
 fn database_is_initialized(conn: &Connection) -> ShizenResult<bool> {
-  Ok(conn.query_row(check_initialized_str(), (), |row| row.get(0))?)
+  Ok(conn.query_row(
+    "SELECT count(name) FROM sqlite_master WHERE type='table' AND name='SchemaVersion'",
+    (),
+    |row| row.get(0),
+  )?)
 }
 
 macro_rules! sqlite_str {
@@ -969,10 +1003,6 @@ macro_rules! sqlite_str {
 
 pub fn libshizen_sql_init_str() -> &'static str {
   sqlite_str!("/sql/sqlite/init.sql")
-}
-
-pub fn check_initialized_str() -> &'static str {
-  "SELECT count(name) FROM sqlite_master WHERE type='table' AND name='SchemaVersion'"
 }
 
 const CURRENT_VERSION: usize = 1;
@@ -1337,6 +1367,15 @@ mod test {
 
     let readback_picard = s.load_note(&picard_note.id);
     assert!(readback_picard.is_err());
+  }
+
+  #[test]
+  #[traced_test]
+  fn initialized_local_settings() {
+    let s = RusqliteStorage::open(None).unwrap();
+    s.get_peer_id().unwrap();
+    let c = s.get_clock().unwrap();
+    assert_eq!(c, 0);
   }
 
   // TODO tests for redo

@@ -1,6 +1,6 @@
 //! Generic storage for TODOs
 use crate::{
-  entities::{Note, NoteId},
+  entities::{Note, NoteId, PeerId},
   result::ShizenResult,
 };
 
@@ -22,6 +22,8 @@ pub trait TodoStorage {
   fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool>;
   fn get_all_descendents(&self, note_id: &NoteId) -> ShizenResult<Vec<Note>>;
   fn get_all_blocked(&self, note_id: &NoteId, recursive: bool) -> ShizenResult<Vec<Note>>;
+  fn get_peer_id(&self) -> ShizenResult<PeerId>;
+  fn get_clock(&self) -> ShizenResult<usize>;
 
   // Update
   fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()>;
