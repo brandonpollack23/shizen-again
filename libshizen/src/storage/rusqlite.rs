@@ -15,20 +15,25 @@ pub struct RusqliteStorage {
 }
 
 impl RusqliteStorage {
-  pub fn create(db_path: &std::path::PathBuf) -> ShizenResult<()> {
-    if db_path.exists() {
-      return Err(ShizenError::ErrorCreatingDb(format!(
-        "Database file already exists: {}",
-        db_path.to_string_lossy().to_owned()
-      )));
-    }
-
-    Connection::open(db_path)?;
-    Self::open(Some(&db_path))?;
-    Ok(())
+  pub fn open(db_path: Option<&std::path::PathBuf>) -> ShizenResult<RusqliteStorage> {
+    Self::open_create(db_path, false)
   }
 
-  pub fn open(db_path: Option<&std::path::PathBuf>) -> ShizenResult<RusqliteStorage> {
+  pub fn open_create(
+    db_path: Option<&std::path::PathBuf>,
+    create: bool,
+  ) -> ShizenResult<RusqliteStorage> {
+    if !create {
+      if let Some(p) = db_path {
+        if db_path.unwrap().exists() {
+          return Err(ShizenError::ErrorCreatingDb(format!(
+            "Database file already exists: {}",
+            p.to_string_lossy().to_owned()
+          )));
+        }
+      }
+    }
+
     if db_path.is_none() {
       info!("Opening sqlite database in memory");
     } else {

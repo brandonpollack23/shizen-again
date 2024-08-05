@@ -71,7 +71,7 @@ fn main() {
   let cli = Cli::parse();
 
   if cli.command == Commands::Create {
-    if let Err(e) = RusqliteStorage::create(&cli.database_path.clone().into()) {
+    if let Err(e) = RusqliteStorage::open_create(Some(&cli.database_path.clone().into()), true) {
       eprintln!("Error creating database: {:?}", e);
       std::process::exit(1);
     }

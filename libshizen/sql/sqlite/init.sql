@@ -37,17 +37,6 @@ ON Dependencies (blocker);
 CREATE INDEX IF NOT EXISTS BlockeeToBlockerIndex
 ON Dependencies (blockee);
 
-CREATE TABLE IF NOT EXISTS Mutations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  action_json TEXT NOT NULL
-);
-
--- TODO clear in maintain method.
-CREATE TABLE IF NOT EXISTS RedoMutations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  action_json TEXT NOT NULL
-);
-
 CREATE VIEW IF NOT EXISTS FullyQualifiedNotes AS 
 SELECT 
   n.uuid,
@@ -63,3 +52,21 @@ LEFT JOIN Children AS children ON n.uuid = children.parent
 LEFT JOIN Dependencies AS blocks ON n.uuid = blocks.blocker
 LEFT JOIN Dependencies AS blocked ON n.uuid = blocked.blockee
 GROUP BY n.uuid, n.title, n.description, children.parent;
+
+CREATE TABLE IF NOT EXISTS Mutations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action_json TEXT NOT NULL
+);
+
+-- TODO clear in maintain method.
+CREATE TABLE IF NOT EXISTS RedoMutations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action_json TEXT NOT NULL
+);
+
+-- Single row table of settings.
+CREATE TABLE IF NOT EXISTS LocalSettings (
+  -- The "version" of the database locally (used for sync).
+  clock INTEGER NOT NULL,
+  peer_id STRING NOT NULL
+)
