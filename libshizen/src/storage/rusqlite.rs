@@ -314,20 +314,20 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     note_id: &NoteId,
   ) -> Result<Vec<NoteId>, ShizenError> {
     conn
-        .prepare("SELECT blockee FROM Dependencies where blocker = ?")?
-        .query_and_then([note_id.0.to_string()], |r| {
-          Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
-        })?
-        .collect::<ShizenResult<Vec<_>>>()
+      .prepare("SELECT blockee FROM Dependencies where blocker = ?")?
+      .query_and_then([note_id.0.to_string()], |r| {
+        Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
+      })?
+      .collect::<ShizenResult<Vec<_>>>()
   }
 
   fn notes_blocking_note(conn: &Connection, note_id: &NoteId) -> Result<Vec<NoteId>, ShizenError> {
     conn
-        .prepare("SELECT blocker FROM Dependencies where blockee = ?")?
-        .query_and_then([note_id.0.to_string()], |r| {
-          Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
-        })?
-        .collect::<ShizenResult<Vec<_>>>()
+      .prepare("SELECT blocker FROM Dependencies where blockee = ?")?
+      .query_and_then([note_id.0.to_string()], |r| {
+        Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
+      })?
+      .collect::<ShizenResult<Vec<_>>>()
   }
 
   fn insert_mutations(conn: &Connection, actions: &[Actions]) -> ShizenResult<()> {
@@ -1029,11 +1029,7 @@ impl TodoStorage for RusqliteStorage {
       } => {
         Self::update_description_txn(&txn, &id, old_description.as_deref())?;
       }
-      Actions::ChangeParent {
-        id,
-        old_parent,
-        new_parent,
-      } => {
+      Actions::ChangeParent { id, old_parent, .. } => {
         Self::change_parent_txn(&txn, &id, old_parent.as_ref())?;
       }
       Actions::AddDependency { blocker, blockee } => {
@@ -1501,7 +1497,7 @@ mod test {
     let clock = s.get_clock().unwrap();
     assert_eq!(clock, 1);
 
-    let riker = s
+    let _riker = s
       .create_new_note(
         "Riker",
         "Number One of the enterprise".into(),

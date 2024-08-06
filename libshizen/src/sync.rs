@@ -41,24 +41,22 @@ impl SyncConnection {
 
     match response {
       SyncResponse::PeerIdentificationHandshakeResponse(r) => Ok(r),
-      other => {
-        Err(ShizenError::UnexpectedSyncProtocolResponse(
-          "PeerIdentificationHandshakeResponse".to_string(),
-          other,
-        ))
-      }
+      other => Err(ShizenError::UnexpectedSyncProtocolResponse(
+        "PeerIdentificationHandshakeResponse".to_string(),
+        other,
+      )),
     }
   }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum SyncRequest {
+pub enum SyncRequest {
   PeerIdentificationHandshake((PeerId, usize)),
   Sync { last_sync_clock: usize },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum SyncResponse {
+pub enum SyncResponse {
   PeerIdentificationHandshakeResponse((PeerId, usize)),
   SyncResponse,
 }
@@ -67,7 +65,7 @@ pub(crate) enum SyncResponse {
 
 /// Server that will listen on sync connections (blocking) as long as it is constructed.
 pub struct SyncServer {
-  thread: JoinHandle<()>,
+  thread: Option<JoinHandle<()>>,
   kill_tx: Sender<()>,
 }
 
@@ -80,7 +78,7 @@ impl SyncServer {
     server.set_nonblocking(true)?;
     let (kill_tx, kill_rx) = std::sync::mpsc::channel::<()>();
 
-    let thread = thread::spawn(move || {
+    let thread = Some(thread::spawn(move || {
       let database = RusqliteStorage::open(Some(&database_path)).unwrap();
       let this_peer_id = database.get_peer_id().unwrap();
 
@@ -103,7 +101,7 @@ impl SyncServer {
           }
         }
       }
-    });
+    }));
 
     Ok(SyncServer { thread, kill_tx })
   }
@@ -120,7 +118,13 @@ impl SyncServer {
 
 impl Drop for SyncServer {
   fn drop(&mut self) {
-    self.kill_tx.send(());
+    if let Err(e) = self.kill_tx.send(()) {
+      error!("Error when killing sync server: {e:#?}");
+    }
+
+    if let Err(e) = self.thread.take().unwrap().join() {
+      error!("Error when joining sync server thread: {e:#?}");
+    }
   }
 }
 
@@ -131,7 +135,8 @@ fn sync_protocol_tx(
   serialize_message_to_stream(sync_message, stream)?;
 
   let mut response_len_bytes = [0; 4];
-  stream.read_exact(&mut response_len_bytes);
+  stream.read_exact(&mut response_len_bytes)?;
+
   let response_len = u32::from_be_bytes(response_len_bytes) as usize;
   let mut response_bytes = vec![0; response_len];
   stream.read_exact(&mut response_bytes)?;
@@ -158,10 +163,10 @@ fn sync_protocol_rx(
   database: &RusqliteStorage,
 ) -> ShizenResult<()> {
   let mut request_len_bytes = [0; 4];
-  stream.read_exact(&mut request_len_bytes);
+  stream.read_exact(&mut request_len_bytes)?;
   let request_len = u32::from_be_bytes(request_len_bytes) as usize;
   let mut request_bytes = vec![0; request_len];
-  stream.read_exact(&mut request_bytes);
+  stream.read_exact(&mut request_bytes)?;
 
   let request: SyncRequest = serde_json::from_slice(&request_bytes)?;
 
