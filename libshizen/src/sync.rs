@@ -184,6 +184,12 @@ fn sync_protocol_rx(
 // TODO write tests for syncing peers.
 #[cfg(test)]
 mod test {
+  use std::{
+    net::{SocketAddr, SocketAddrV4, ToSocketAddrs},
+    str::FromStr,
+  };
+
+  use tracing::info;
   use tracing_test::traced_test;
 
   use crate::{
@@ -203,15 +209,27 @@ mod test {
     let _first_syncer =
       SyncServer::listen_on_thread("localhost:1701", in_memory_uri.into()).unwrap();
 
-    let second = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
+    let second = RusqliteStorage::open(None).unwrap();
 
     let second_pid = second.get_peer_id().unwrap();
 
     let expected_first_pid = second.add_peer("localhost:1701").unwrap();
     assert_eq!(expected_first_pid, first_pid);
 
-    let second_peer_read = &first.get_peers().unwrap()[0];
-    assert_eq!(second_peer_read.peer_id, second_pid);
-    assert_eq!(second_peer_read.clock, 0);
+    let seconds_peers = second.get_peers().unwrap();
+    assert_eq!(seconds_peers.len(), 1);
+    assert_eq!(seconds_peers[0].peer_id, first_pid);
+    assert_eq!(seconds_peers[0].clock, 0);
+    assert_eq!(
+      seconds_peers[0].addr,
+      "localhost:1701".to_socket_addrs().unwrap().next().unwrap()
+    );
+
+    let peers = &first.get_peers().unwrap();
+    info!("peers {:#?}", peers);
+
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0].peer_id, second_pid);
+    assert_eq!(peers[0].clock, 0);
   }
 }
