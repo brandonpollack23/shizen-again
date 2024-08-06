@@ -1,7 +1,7 @@
 use std::{
   io::{Read, Write},
   net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
-  sync::{mpsc::Sender, Arc},
+  sync::mpsc::Sender,
   thread::{self, JoinHandle},
   time::Duration,
 };
@@ -40,9 +40,9 @@ impl SyncConnection {
     )?;
 
     match response {
-      SyncResponse::PeerIdentificationHandshakeResponse(r) => return Ok(r),
+      SyncResponse::PeerIdentificationHandshakeResponse(r) => Ok(r),
       other => {
-        return Err(ShizenError::UnexpectedSyncProtocolResponse(
+        Err(ShizenError::UnexpectedSyncProtocolResponse(
           "PeerIdentificationHandshakeResponse".to_string(),
           other,
         ))
@@ -147,7 +147,7 @@ fn serialize_message_to_stream<M: Serialize>(
   let message = serde_json::to_string(message)?;
   let len_bytes: u32 = message.len() as u32;
   stream.write(&len_bytes.to_be_bytes())?;
-  stream.write(&message.as_bytes())?;
+  stream.write(message.as_bytes())?;
   Ok(())
 }
 
@@ -184,18 +184,12 @@ fn sync_protocol_rx(
 // TODO write tests for syncing peers.
 #[cfg(test)]
 mod test {
-  use std::{
-    net::{SocketAddr, SocketAddrV4, ToSocketAddrs},
-    str::FromStr,
-  };
+  use std::net::ToSocketAddrs;
 
   use tracing::info;
   use tracing_test::traced_test;
 
-  use crate::{
-    entities::PeerInfo,
-    storage::{rusqlite::RusqliteStorage, TodoStorage},
-  };
+  use crate::storage::{rusqlite::RusqliteStorage, TodoStorage};
 
   use super::SyncServer;
 

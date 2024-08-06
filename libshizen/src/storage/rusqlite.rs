@@ -1,5 +1,5 @@
 //! Sqlite storage engine using rusqlite.
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, RwLock};
 
 use rusqlite::{Connection, Row};
@@ -80,11 +80,11 @@ impl RusqliteStorage {
   }
 
   fn load_note_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<Note> {
-    Ok(conn.query_row_and_then::<Note, ShizenError, _, _>(
+    conn.query_row_and_then::<Note, ShizenError, _, _>(
       "SELECT uuid, title, description, parent, blocks, blocked, children FROM FullyQualifiedNotes WHERE uuid = ?",
       [note_id.0.to_string()],
       Self::row_to_note
-    )?)
+    )
   }
 
   fn note_exists_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<bool> {
@@ -221,7 +221,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.child = n.uuid
     ))?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_and_then([note_id.0.to_string()], |r| Self::row_to_note(r))?
+      .query_and_then([note_id.0.to_string()], Self::row_to_note)?
       .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 
@@ -237,7 +237,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.child = n.uuid
       let mut stmt = conn.prepare("SELECT blocked FROM FullyQualifiedNotes WHERE uuid = ?")?;
 
       let result: ShizenResult<Vec<_>> = stmt
-        .query_and_then([note_id.0.to_string()], |r| Self::row_to_note(r))?
+        .query_and_then([note_id.0.to_string()], Self::row_to_note)?
         .map(|v: ShizenResult<_>| v.map_err(Into::into))
         .collect();
 
@@ -254,7 +254,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     ))?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_and_then([note_id.0.to_string()], |r| Self::row_to_note(r))?
+      .query_and_then([note_id.0.to_string()], Self::row_to_note)?
       .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 
@@ -313,25 +313,21 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     conn: &Connection,
     note_id: &NoteId,
   ) -> Result<Vec<NoteId>, ShizenError> {
-    Ok(
-      conn
+    conn
         .prepare("SELECT blockee FROM Dependencies where blocker = ?")?
         .query_and_then([note_id.0.to_string()], |r| {
           Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
         })?
-        .collect::<ShizenResult<Vec<_>>>()?,
-    )
+        .collect::<ShizenResult<Vec<_>>>()
   }
 
   fn notes_blocking_note(conn: &Connection, note_id: &NoteId) -> Result<Vec<NoteId>, ShizenError> {
-    Ok(
-      conn
+    conn
         .prepare("SELECT blocker FROM Dependencies where blockee = ?")?
         .query_and_then([note_id.0.to_string()], |r| {
           Ok(NoteId(Uuid::parse_str(&r.get::<_, String>(0)?)?))
         })?
-        .collect::<ShizenResult<Vec<_>>>()?,
-    )
+        .collect::<ShizenResult<Vec<_>>>()
   }
 
   fn insert_mutations(conn: &Connection, actions: &[Actions]) -> ShizenResult<()> {
@@ -343,7 +339,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
         "INSERT INTO Mutations (action_json, clock) VALUES (?, ?)",
         (action_json, clock),
       )?;
-      clock = clock + 1;
+      clock += 1;
     }
 
     conn.execute("UPDATE LocalSettings SET clock = ?", [clock])?;
@@ -359,7 +355,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
         "INSERT INTO RedoMutations (action_json) VALUES (?)",
         [action_json],
       )?;
-      clock = clock + 1;
+      clock += 1;
     }
 
     conn.execute("UPDATE LocalSettings SET clock = ?", [clock])?;
@@ -375,7 +371,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     parent_id: Option<&NoteId>,
   ) -> ShizenResult<Note> {
     if let Some(pid) = parent_id {
-      if !Self::note_exists_conn(&txn, pid)? {
+      if !Self::note_exists_conn(txn, pid)? {
         return Err(ShizenError::NoSuchNote(pid.clone()));
       }
     }
@@ -398,7 +394,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     }
 
     Self::insert_mutations(
-      &txn,
+      txn,
       &[Actions::CreateNote {
         id: NoteId(uuid),
         parent: parent_id.cloned(),
@@ -425,7 +421,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
   }
 
   fn update_title_txn(txn: &Connection, note_id: &NoteId, title: &str) -> ShizenResult<()> {
-    let old_title = Self::load_note_conn(&txn, note_id)?.title;
+    let old_title = Self::load_note_conn(txn, note_id)?.title;
 
     txn.execute(
       r#"UPDATE Notes SET title = ? WHERE uuid = ?"#,
@@ -433,7 +429,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     )?;
 
     Self::insert_mutations(
-      &txn,
+      txn,
       &[Actions::UpdateTitle {
         id: note_id.clone(),
         new_title: title.to_string(),
@@ -449,9 +445,9 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     note_id: &NoteId,
     description: Option<&str>,
   ) -> ShizenResult<()> {
-    let old_description = Self::load_note_conn(&txn, note_id)?.description;
+    let old_description = Self::load_note_conn(txn, note_id)?.description;
     Self::insert_mutations(
-      &txn,
+      txn,
       &[Actions::UpdateDescription {
         id: note_id.clone(),
         old_description,
@@ -479,17 +475,17 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     note_id: &NoteId,
     parent: Option<&NoteId>,
   ) -> ShizenResult<()> {
-    if !Self::note_exists_conn(&txn, note_id)? {
+    if !Self::note_exists_conn(txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
     }
 
-    let old_parent = Self::load_note_conn(&txn, note_id)?.parent_id;
+    let old_parent = Self::load_note_conn(txn, note_id)?.parent_id;
     Self::insert_mutations(
-      &txn,
+      txn,
       &[Actions::ChangeParent {
         id: note_id.clone(),
         old_parent,
-        new_parent: parent.map(Clone::clone),
+        new_parent: parent.cloned(),
       }],
     )?;
 
@@ -503,11 +499,11 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
         [note_id.0.to_string()],
       )?;
     } else {
-      if !Self::note_exists_conn(&txn, parent.unwrap())? {
+      if !Self::note_exists_conn(txn, parent.unwrap())? {
         return Err(ShizenError::NoSuchNote(parent.unwrap().clone()));
       }
 
-      if Self::is_descendent_of(&txn, note_id, parent.unwrap())? {
+      if Self::is_descendent_of(txn, note_id, parent.unwrap())? {
         return Err(ShizenError::ParentCircularReference(
           parent.unwrap().clone(),
           note_id.clone(),
@@ -528,23 +524,23 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
   }
 
   fn add_dep_txn(txn: &Connection, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
-    if !Self::note_exists_conn(&txn, note_id)? {
+    if !Self::note_exists_conn(txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
     }
 
-    if !Self::note_exists_conn(&txn, blocked_note)? {
+    if !Self::note_exists_conn(txn, blocked_note)? {
       return Err(ShizenError::NoSuchNote(blocked_note.clone()));
     }
 
     Self::insert_mutations(
-      &txn,
+      txn,
       &[Actions::AddDependency {
         blocker: note_id.clone(),
         blockee: blocked_note.clone(),
       }],
     )?;
 
-    if Self::note_blocks_other_note(&txn, blocked_note, note_id)? {
+    if Self::note_blocks_other_note(txn, blocked_note, note_id)? {
       // This would create a circular dependency.
       return Err(ShizenError::DependencyCircularReference(
         note_id.clone(),
@@ -563,16 +559,16 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
   }
 
   fn remove_dep_txn(txn: &Connection, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
-    if !Self::note_exists_conn(&txn, note_id)? {
+    if !Self::note_exists_conn(txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
     }
 
-    if !Self::note_exists_conn(&txn, blocked_note)? {
+    if !Self::note_exists_conn(txn, blocked_note)? {
       return Err(ShizenError::NoSuchNote(blocked_note.clone()));
     }
 
     Self::insert_mutations(
-      &txn,
+      txn,
       &[Actions::RemoveDependency {
         blocker: note_id.clone(),
         blockee: blocked_note.clone(),
@@ -600,7 +596,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
   }
 
   fn delete_note_txn(txn: &Connection, note_id: &NoteId) -> ShizenResult<()> {
-    let old_note = Self::load_note_conn(&txn, note_id)?;
+    let old_note = Self::load_note_conn(txn, note_id)?;
 
     // TODO can i do this more efficently and not recalculate the CTE?
     txn
@@ -620,7 +616,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       [note_id.0.to_string()],
     )?;
 
-    Self::insert_mutations(&txn, &[Actions::DeleteNote { note: old_note }])?;
+    Self::insert_mutations(txn, &[Actions::DeleteNote { note: old_note }])?;
 
     Ok(())
   }
@@ -696,7 +692,7 @@ impl TodoStorage for RusqliteStorage {
     )?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_and_then((), |r| Self::row_to_note(r))?
+      .query_and_then((), Self::row_to_note)?
       .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 
@@ -713,7 +709,7 @@ impl TodoStorage for RusqliteStorage {
     )?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_and_then((), |r| Self::row_to_note(r))?
+      .query_and_then((), Self::row_to_note)?
       .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 
@@ -888,7 +884,7 @@ impl TodoStorage for RusqliteStorage {
 
         let undo_action: Actions = serde_json::from_str(&undo_action_json)?;
 
-        return Ok((id_to_remove, undo_action, clock, undo_action_json));
+        Ok((id_to_remove, undo_action, clock, undo_action_json))
       },
     )?;
 
@@ -1004,7 +1000,7 @@ impl TodoStorage for RusqliteStorage {
         let redo_action_json: String = r.get(1)?;
         let redo_action: Actions = serde_json::from_str(&redo_action_json)?;
 
-        return Ok((id_to_remove, redo_action));
+        Ok((id_to_remove, redo_action))
       },
     )?;
 
@@ -1019,7 +1015,7 @@ impl TodoStorage for RusqliteStorage {
           &txn,
           Some(id.0),
           &title,
-          description.as_ref().map(|x| x.as_str()),
+          description.as_deref(),
           parent.as_ref(),
         )?;
       }
@@ -1031,7 +1027,7 @@ impl TodoStorage for RusqliteStorage {
         old_description,
         ..
       } => {
-        Self::update_description_txn(&txn, &id, old_description.as_ref().map(|s| s.as_str()))?;
+        Self::update_description_txn(&txn, &id, old_description.as_deref())?;
       }
       Actions::ChangeParent {
         id,
@@ -1125,7 +1121,7 @@ mod test {
   #[test]
   #[traced_test]
   fn write_read_note() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
 
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
@@ -1150,7 +1146,7 @@ mod test {
   #[test]
   #[traced_test]
   fn delete_note() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -1173,7 +1169,7 @@ mod test {
   #[test]
   #[traced_test]
   fn delete_note_with_children() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -1215,7 +1211,7 @@ mod test {
   #[test]
   #[traced_test]
   fn is_descendent_of() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -1241,7 +1237,7 @@ mod test {
   #[test]
   #[traced_test]
   fn update_title() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -1256,7 +1252,7 @@ mod test {
   #[test]
   #[traced_test]
   fn update_description() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -1361,7 +1357,7 @@ mod test {
 
     s.add_blocked_note(&bev.id, &picard_note.id).unwrap();
     let r = s.add_blocked_note(&picard_note.id, &bev.id);
-    assert!(matches!(r, Err(_)));
+    assert!(r.is_err());
 
     let wesley = s
       .create_new_note("Wesley Crusher", "Kid".into(), None)
@@ -1369,7 +1365,7 @@ mod test {
 
     s.add_blocked_note(&wesley.id, &bev.id).unwrap();
     let r = s.add_blocked_note(&picard_note.id, &wesley.id);
-    assert!(matches!(r, Err(_)));
+    assert!(r.is_err());
 
     s.remove_blocked_note(&wesley.id, &bev.id).unwrap();
     s.add_blocked_note(&picard_note.id, &wesley.id).unwrap();

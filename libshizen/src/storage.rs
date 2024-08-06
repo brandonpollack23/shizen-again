@@ -1,7 +1,6 @@
 //! Generic storage for TODOs
 use std::net::ToSocketAddrs;
 
-use serde::Serialize;
 
 use crate::{
   entities::{Note, NoteId, PeerId, PeerInfo},
