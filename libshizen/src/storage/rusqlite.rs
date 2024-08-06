@@ -9,8 +9,14 @@ use uuid::Uuid;
 
 use crate::entities::{Action, Note, NoteId, PeerId, PeerInfo};
 use crate::storage::TodoStorage;
-use crate::sync::SyncConnection;
+use crate::sync::{SyncConnection, SyncResults};
 use crate::{ShizenError, ShizenResult};
+
+macro_rules! sqlite_str {
+  ($path:expr) => {
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), $path))
+  };
+}
 
 #[derive(Clone)]
 pub struct RusqliteStorage {
@@ -420,9 +426,12 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     Ok(clock)
   }
 
-  fn update_title_txn(txn: &Connection, note_id: &NoteId, title: &str) -> ShizenResult<()> {
-    let old_title = Self::load_note_conn(txn, note_id)?.title;
-
+  fn update_title_txn(
+    txn: &Connection,
+    note_id: &NoteId,
+    title: &str,
+    old_title: &str,
+  ) -> ShizenResult<()> {
     txn.execute(
       r#"UPDATE Notes SET title = ? WHERE uuid = ?"#,
       [title, &note_id.0.to_string()],
@@ -433,7 +442,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       &[Action::UpdateTitle {
         id: note_id.clone(),
         new_title: title.to_string(),
-        old_title,
+        old_title: old_title.to_string(),
       }],
     )?;
 
@@ -444,13 +453,13 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     txn: &Connection,
     note_id: &NoteId,
     description: Option<&str>,
+    old_description: Option<&str>,
   ) -> ShizenResult<()> {
-    let old_description = Self::load_note_conn(txn, note_id)?.description;
     Self::insert_mutations(
       txn,
       &[Action::UpdateDescription {
         id: note_id.clone(),
-        old_description,
+        old_description: old_description.map(|d| d.to_string()),
         new_description: description.map(|d| d.to_string()),
       }],
     )?;
@@ -474,17 +483,17 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     txn: &Connection,
     note_id: &NoteId,
     parent: Option<&NoteId>,
+    old_parent: Option<&NoteId>,
   ) -> ShizenResult<()> {
     if !Self::note_exists_conn(txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
     }
 
-    let old_parent = Self::load_note_conn(txn, note_id)?.parent_id;
     Self::insert_mutations(
       txn,
       &[Action::ChangeParent {
         id: note_id.clone(),
-        old_parent,
+        old_parent: old_parent.cloned(),
         new_parent: parent.cloned(),
       }],
     )?;
@@ -792,7 +801,8 @@ impl TodoStorage for RusqliteStorage {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    Self::update_title_txn(&txn, note_id, title)?;
+    let old_title = Self::load_note_conn(&txn, note_id)?.title;
+    Self::update_title_txn(&txn, note_id, title, &old_title)?;
 
     txn.commit()?;
 
@@ -803,7 +813,13 @@ impl TodoStorage for RusqliteStorage {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    Self::update_description_txn(&txn, note_id, description)?;
+    let old_description = Self::load_note_conn(&txn, note_id)?.description;
+    Self::update_description_txn(
+      &txn,
+      note_id,
+      description,
+      old_description.as_ref().map(|d| d.as_str()),
+    )?;
     txn.commit()?;
 
     Ok(())
@@ -813,7 +829,8 @@ impl TodoStorage for RusqliteStorage {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    Self::change_parent_txn(&txn, note_id, parent)?;
+    let old_parent = Self::load_note_conn(&txn, note_id)?.parent_id;
+    Self::change_parent_txn(&txn, note_id, parent, old_parent.as_ref())?;
 
     txn.commit()?;
     Ok(())
@@ -985,18 +1002,27 @@ impl TodoStorage for RusqliteStorage {
           parent.as_ref(),
         )?;
       }
-      Action::UpdateTitle { id, old_title, .. } => {
-        Self::update_title_txn(&txn, &id, &old_title)?;
+      Action::UpdateTitle {
+        id,
+        old_title,
+        new_title,
+      } => {
+        Self::update_title_txn(&txn, &id, &new_title, &old_title)?;
       }
       Action::UpdateDescription {
         id,
         old_description,
-        ..
+        new_description,
       } => {
-        Self::update_description_txn(&txn, &id, old_description.as_deref())?;
+        Self::update_description_txn(
+          &txn,
+          &id,
+          new_description.as_ref().map(|d| d.as_str()),
+          old_description.as_ref().map(|d| d.as_str()),
+        )?;
       }
       Action::ChangeParent { id, old_parent, .. } => {
-        Self::change_parent_txn(&txn, &id, old_parent.as_ref())?;
+        Self::change_parent_txn(&txn, &id, old_parent.as_ref(), old_parent.as_ref())?;
       }
       Action::AddDependency { blocker, blockee } => {
         Self::add_dep_txn(&txn, &blocker, &blockee)?;
@@ -1026,8 +1052,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<crate::sync::SyncResults> {
-    let mut conn = self.conn.borrow_mut();
+  fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<SyncResults> {
     let mut sync_conn = SyncConnection::new(&peer.addr)?;
     sync_conn.sync_with_peer(&peer, self)
   }
@@ -1056,14 +1081,19 @@ impl TodoStorage for RusqliteStorage {
         old_title,
         new_title,
       } => {
-        Self::update_title_txn(&txn, id, new_title)?;
+        Self::update_title_txn(&txn, id, new_title, old_title)?;
       }
       Action::UpdateDescription {
         id,
         old_description,
         new_description,
       } => {
-        Self::update_description_txn(&txn, id, new_description.as_ref().map(|d| d.as_str()))?;
+        Self::update_description_txn(
+          &txn,
+          id,
+          new_description.as_ref().map(|d| d.as_str()),
+          old_description.as_ref().map(|d| d.as_str()),
+        )?;
       }
       Action::ChangeParent {
         id,
@@ -1072,7 +1102,7 @@ impl TodoStorage for RusqliteStorage {
       } => {
         // TODO NOW this should take old parent since this might be from sync (same for ALL update_txn operations).
         // Test this case
-        Self::change_parent_txn(&txn, id, new_parent.as_ref())?;
+        Self::change_parent_txn(&txn, id, new_parent.as_ref(), old_parent.as_ref())?;
       }
       Action::AddDependency { blocker, blockee } => {
         Self::add_dep_txn(&txn, blocker, blockee)?;
@@ -1085,7 +1115,7 @@ impl TodoStorage for RusqliteStorage {
       }
     }
 
-    txn.commit();
+    txn.commit()?;
     Ok(())
   }
 }
@@ -1096,12 +1126,6 @@ fn database_is_initialized(conn: &Connection) -> ShizenResult<bool> {
     (),
     |row| row.get(0),
   )?)
-}
-
-macro_rules! sqlite_str {
-  ($path:expr) => {
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), $path))
-  };
 }
 
 pub fn libshizen_sql_init_str() -> &'static str {
