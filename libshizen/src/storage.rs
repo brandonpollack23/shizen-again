@@ -28,6 +28,7 @@ pub trait TodoStorage {
   // Read
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>>;
   fn load_all_unblocked_notes(&self) -> ShizenResult<Vec<Note>>;
+  fn load_all_changes_since_clock(&self, clock: usize) -> ShizenResult<Vec<Action>>;
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note>;
   fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool>;
   fn get_all_descendents(&self, note_id: &NoteId) -> ShizenResult<Vec<Note>>;
@@ -43,11 +44,13 @@ pub trait TodoStorage {
   fn update_parent(&self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()>;
   fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
   fn remove_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
+  fn set_peer_clock(&self, peer_id: PeerId, clock: usize) -> ShizenResult<()>;
 
   fn apply_action(&self, action: &Action) -> ShizenResult<()>;
 
-  fn undo(&self) -> ShizenResult<()>;
-  fn redo(&self) -> ShizenResult<()>;
+  /// Returns the value the clock was rewinded to.
+  fn undo(&self) -> ShizenResult<usize>;
+  fn redo(&self) -> ShizenResult<usize>;
 
   // Delete
   fn delete_note(&self, note_id: &NoteId) -> crate::ShizenResult<()>;

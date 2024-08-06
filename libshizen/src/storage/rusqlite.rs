@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::rc::Rc;
 
+use rusqlite::Error::QueryReturnedNoRows;
 use rusqlite::{Connection, Row};
 use tracing::{info, trace};
 use uuid::Uuid;
@@ -712,6 +713,22 @@ impl TodoStorage for RusqliteStorage {
     result
   }
 
+  fn load_all_changes_since_clock(&self, clock: usize) -> ShizenResult<Vec<Action>> {
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
+
+    let actions: ShizenResult<Vec<_>> = txn
+      .prepare("SELECT action_json FROM Mutations WHERE clock >= clock ORDER BY clock ASC")?
+      .query_and_then([], |r| -> ShizenResult<_> {
+        let action_json: String = r.get(0)?;
+        let action: Action = serde_json::from_str(&action_json)?;
+        Ok(action)
+      })?
+      .collect();
+
+    Ok(actions?)
+  }
+
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note> {
     let conn = self.conn.borrow();
     Self::load_note_conn(&conn, note_id)
@@ -755,14 +772,14 @@ impl TodoStorage for RusqliteStorage {
     let conn = self.conn.borrow();
 
     let mut stmt = conn.prepare("SELECT peer_id, clock, addr FROM Peers")?;
-    let peer_infos: Result<Vec<PeerInfo>, _> = stmt
-      .query_map([], |r| {
+    let peer_infos: ShizenResult<Vec<PeerInfo>> = stmt
+      .query_and_then([], |r| -> ShizenResult<_> {
         // TODO error handle
-        let peer_id_str: String = r.get(0).unwrap();
-        let peer_id = PeerId(Uuid::parse_str(&peer_id_str).unwrap());
-        let clock: usize = r.get(1).unwrap();
-        let addr_json: String = r.get(2).unwrap();
-        let addr: SocketAddr = serde_json::from_str(&addr_json).unwrap();
+        let peer_id_str: String = r.get(0)?;
+        let peer_id = PeerId(Uuid::parse_str(&peer_id_str)?);
+        let clock: usize = r.get(1)?;
+        let addr_json: String = r.get(2)?;
+        let addr: SocketAddr = serde_json::from_str(&addr_json)?;
 
         Ok(PeerInfo {
           peer_id,
@@ -859,11 +876,24 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn undo(&self) -> ShizenResult<()> {
+  fn set_peer_clock(&self, peer_id: PeerId, clock: usize) -> ShizenResult<()> {
+    let conn = self.conn.borrow_mut();
+
+    conn.execute(
+      "UPDATE Peers SET clock = ? WHERE peer_id = ?",
+      (clock, peer_id.0.to_string()),
+    )?;
+
+    Ok(())
+  }
+
+  fn undo(&self) -> ShizenResult<usize> {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    let (id_to_remove, undo_action, new_clock, undo_action_json) = txn.query_row_and_then(
+    let start_clock = Self::get_clock_txn(&txn)?;
+
+    let q = txn.query_row_and_then(
       "SELECT id, action_json, clock FROM Mutations ORDER BY id DESC LIMIT 1",
       [],
       |r| -> ShizenResult<_> {
@@ -875,7 +905,13 @@ impl TodoStorage for RusqliteStorage {
 
         Ok((id_to_remove, undo_action, clock, undo_action_json))
       },
-    )?;
+    );
+
+    if let Err(ShizenError::RusqliteError(QueryReturnedNoRows)) = q {
+      return Ok(start_clock);
+    }
+
+    let (id_to_remove, undo_action, new_clock, undo_action_json) = q?;
 
     match undo_action {
       Action::CreateNote { id, parent, .. } => {
@@ -971,14 +1007,16 @@ impl TodoStorage for RusqliteStorage {
     txn.execute("UPDATE LocalSettings SET clock = ?", [new_clock])?;
 
     txn.commit()?;
-    Ok(())
+    Ok(new_clock)
   }
 
-  fn redo(&self) -> ShizenResult<()> {
+  fn redo(&self) -> ShizenResult<usize> {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    let (id_to_remove, redo_action) = txn.query_row_and_then(
+    let start_clock = Self::get_clock_txn(&txn)?;
+
+    let q = txn.query_row_and_then(
       "SELECT id, action_json FROM RedoMutations ORDER BY id DESC LIMIT 1",
       [],
       |r| -> ShizenResult<_> {
@@ -988,7 +1026,13 @@ impl TodoStorage for RusqliteStorage {
 
         Ok((id_to_remove, redo_action))
       },
-    )?;
+    );
+
+    if let Err(ShizenError::RusqliteError(QueryReturnedNoRows)) = q {
+      return Ok(start_clock);
+    }
+
+    let (id_to_remove, redo_action) = q?;
 
     match redo_action {
       Action::CreateNote {
@@ -1039,9 +1083,10 @@ impl TodoStorage for RusqliteStorage {
     }
 
     txn.execute("DELETE FROM RedoMutations WHERE id = ?", [id_to_remove])?;
+    let new_clock = self.get_clock()?;
 
     txn.commit()?;
-    Ok(())
+    Ok(new_clock)
   }
 
   fn delete_note(&self, note_id: &NoteId) -> ShizenResult<()> {

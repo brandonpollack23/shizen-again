@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tracing::error;
+use tracing::{error, info, trace, warn};
 
 use crate::{
   entities::{Action, PeerId, PeerInfo},
@@ -45,11 +45,14 @@ impl SyncConnection {
     peer: &PeerInfo,
     database: &RusqliteStorage,
   ) -> ShizenResult<SyncResults> {
-    // TODO
+    info!("Beginning sync with peer: {peer:#?}");
+
     // 1. Check that peer is added to peers table, if not handshake it.
     let peer = {
       let stored_peer_info = database.get_peer(&peer.peer_id);
       if let Err(_) = stored_peer_info {
+        warn!("Peer is not in the database, handshaking...");
+
         let this_peer_id = database.get_peer_id()?;
         let peer_id = self.peer_id_handshake(&this_peer_id)?;
         database.get_peer(&peer_id)?
@@ -66,26 +69,55 @@ impl SyncConnection {
       },
     )?;
 
-    let changes = match response {
+    let (clock, changes) = match response {
       SyncResponse::PeerIdentificationHandshakeResponse(_) => {
         return Err(ShizenError::UnexpectedSyncProtocolResponse(
           "SyncResponse".to_string(),
           response,
         ));
       }
-      SyncResponse::SyncResponse { changes } => changes,
+      SyncResponse::SyncResponse { clock, changes } => (clock, changes),
     };
 
+    info!(
+      "Received sync response with {} changes and clock of {}",
+      changes.len(),
+      clock
+    );
+
+    // 3. Rebase our changes on top of these and increment our version to match.
+    // First undo all our local changes
+    let mut changes_undone = 0usize;
+    loop {
+      let clock = database.undo()?;
+      changes_undone = changes_undone + 1;
+
+      if clock == 0 || clock > peer.clock {
+        break;
+      }
+    }
+
     // Insert each of these in the database
-    for change_json in &changes {
-      let change: Action = serde_json::from_str(&change_json)?;
+    for change in &changes {
       database.apply_action(&change)?;
     }
 
-    // 3. Rebase our changes on top of these and increment our version to match.
+    // Replace all our changes.
+    while changes_undone > 0 {
+      // TODO handle merge conflicts (attempt to merge when same notes modified).
+      database.redo()?;
+      changes_undone = changes_undone - 1;
+    }
+
     // 4. Update the synced version of this peer in the peers table
-    // 5. OPTIONAL in the recieving in notify of some way to request sync back.
-    todo!()
+    database.set_peer_clock(peer.peer_id, clock)?;
+
+    // 5. TODO in the recieving in notify of some way to request sync back.
+
+    Ok(SyncResults {
+      updated_peer_clock: clock,
+      num_changes: changes.len(),
+    })
   }
 }
 
@@ -98,13 +130,13 @@ pub enum SyncRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncResponse {
   PeerIdentificationHandshakeResponse(PeerId),
-  SyncResponse {
-    /// Vec of encoded change jsons (same as in undo table)
-    changes: Vec<String>,
-  },
+  SyncResponse { clock: usize, changes: Vec<Action> },
 }
 
-pub struct SyncResults {}
+pub struct SyncResults {
+  updated_peer_clock: usize,
+  num_changes: usize,
+}
 
 // TODO spawn threads to sync multiple peers at once?
 
@@ -177,6 +209,8 @@ fn sync_protocol_tx(
   stream: &mut TcpStream,
   sync_message: &SyncRequest,
 ) -> Result<SyncResponse, ShizenError> {
+  trace!("Sending message {sync_message:#?} to peer");
+
   serialize_message_to_stream(sync_message, stream)?;
 
   let mut response_len_bytes = [0; 4];
@@ -225,8 +259,11 @@ fn sync_protocol_rx(
         stream,
       )?;
     }
-    // TODO now implement sync and test
-    SyncRequest::Sync { last_sync_clock } => todo!(),
+    SyncRequest::Sync { last_sync_clock } => {
+      let changes = database.load_all_changes_since_clock(last_sync_clock)?;
+      let clock = database.get_clock()?;
+      serialize_message_to_stream(&SyncResponse::SyncResponse { changes, clock }, stream)?;
+    }
   }
 
   Ok(())
@@ -284,10 +321,10 @@ mod test {
     let in_memory_uri = "file:peer_sync_one_way?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1701", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread("localhost:1702", in_memory_uri.into()).unwrap();
 
     let second = RusqliteStorage::open(None).unwrap();
-    let sync_peer_id = second.add_peer("localhost:1701").unwrap();
+    let sync_peer_id = second.add_peer("localhost:1702").unwrap();
     let peer = second.get_peer(&sync_peer_id).unwrap();
 
     let picard = first
@@ -296,7 +333,19 @@ mod test {
     let riker = first
       .create_new_note("Riker", Some("Number One"), Some(&picard.id))
       .unwrap();
+    let picard = first.load_note(&picard.id).unwrap();
 
-    second.sync_with_peer(&peer).unwrap();
+    let sync_results = second.sync_with_peer(&peer).unwrap();
+    assert_eq!(sync_results.num_changes, 2);
+    assert_eq!(sync_results.updated_peer_clock, 2);
+
+    let synced_notes = second.load_all_notes().unwrap();
+    let picard_synced = synced_notes.iter().find(|n| n.title == "Picard").unwrap();
+    let riker_synced = synced_notes.iter().find(|n| n.title == "Riker").unwrap();
+    assert_eq!(picard, picard_synced.clone());
+    assert_eq!(riker, riker_synced.clone());
   }
+
+  // TODO do sync with local added notes.
+  // TODO do sync with all updates done locally and remotely.
 }
