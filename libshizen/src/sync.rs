@@ -15,10 +15,6 @@ use crate::{
   ShizenError, ShizenResult,
 };
 
-// TODO NOW peers and sync.
-// implement sync server side.
-// then sync algorithm.
-
 pub struct SyncConnection {
   stream: TcpStream,
 }
@@ -180,13 +176,13 @@ fn sync_protocol_rx(
         stream,
       )?;
     }
+    // TODO now implement sync and test
     SyncRequest::Sync { last_sync_clock } => todo!(),
   }
 
   Ok(())
 }
 
-// TODO write tests for syncing peers.
 #[cfg(test)]
 mod test {
   use std::net::ToSocketAddrs;
