@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 
 use crate::{
-  entities::PeerId,
+  entities::{PeerId, PeerInfo},
   storage::{rusqlite::RusqliteStorage, TodoStorage},
   ShizenError, ShizenResult,
 };
@@ -25,14 +25,10 @@ impl SyncConnection {
     Ok(SyncConnection { stream })
   }
 
-  pub fn peer_id_handshake(
-    &mut self,
-    this_peer_id: PeerId,
-    current_clock: usize,
-  ) -> ShizenResult<(PeerId, usize)> {
+  pub fn peer_id_handshake(&mut self, this_peer_id: PeerId) -> ShizenResult<PeerId> {
     let response = sync_protocol_tx(
       &mut self.stream,
-      &SyncRequest::PeerIdentificationHandshake((this_peer_id, current_clock)),
+      &SyncRequest::PeerIdentificationHandshake(this_peer_id),
     )?;
 
     match response {
@@ -43,19 +39,31 @@ impl SyncConnection {
       )),
     }
   }
+
+  pub fn sync_with_peer(&mut self, peer: &PeerInfo) -> ShizenResult<SyncResults> {
+    // TODO
+    // 1. Check that peer is added to peers table, if not handshake it.
+    // 2. Request all changes since last synced change
+    // 3. Rebase our changes on top of these and increment our version to match.
+    // 4. Update the synced version of this peer in the peers table
+    // 5. OPTIONAL in the recieving in notify of some way to request sync back.
+    todo!()
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncRequest {
-  PeerIdentificationHandshake((PeerId, usize)),
+  PeerIdentificationHandshake(PeerId),
   Sync { last_sync_clock: usize },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncResponse {
-  PeerIdentificationHandshakeResponse((PeerId, usize)),
+  PeerIdentificationHandshakeResponse(PeerId),
   SyncResponse,
 }
+
+pub struct SyncResults {}
 
 // TODO spawn threads to sync multiple peers at once?
 
@@ -167,12 +175,12 @@ fn sync_protocol_rx(
   let request: SyncRequest = serde_json::from_slice(&request_bytes)?;
 
   match request {
-    SyncRequest::PeerIdentificationHandshake((other_peer_id, other_clock)) => {
+    SyncRequest::PeerIdentificationHandshake(other_peer_id) => {
+      let other_clock = 0; // No syncing done yet, always start at 0.
       database.add_connected_peer(other_peer_id, other_clock, addr)?;
 
-      let current_clock = database.get_clock()?;
       serialize_message_to_stream(
-        &SyncResponse::PeerIdentificationHandshakeResponse((this_peer_id.clone(), current_clock)),
+        &SyncResponse::PeerIdentificationHandshakeResponse(this_peer_id.clone()),
         stream,
       )?;
     }
