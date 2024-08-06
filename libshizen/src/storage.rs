@@ -1,4 +1,6 @@
 //! Generic storage for TODOs
+use std::net::ToSocketAddrs;
+
 use crate::{
   entities::{Note, NoteId, PeerId},
   result::ShizenResult,
@@ -9,11 +11,12 @@ pub mod rusqlite;
 pub trait TodoStorage {
   // Create
   fn create_new_note(
-    &mut self,
+    &self,
     title: &str,
     description: Option<&str>,
     parent: Option<&NoteId>,
   ) -> ShizenResult<Note>;
+  fn add_peer<A: ToSocketAddrs>(&self, addr: A) -> ShizenResult<PeerId>;
 
   // Read
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>>;
@@ -26,18 +29,17 @@ pub trait TodoStorage {
   fn get_clock(&self) -> ShizenResult<usize>;
 
   // Update
-  fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()>;
-  fn update_description(&mut self, note_id: &NoteId, description: Option<&str>)
-    -> ShizenResult<()>;
-  fn update_parent(&mut self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()>;
-  fn add_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
-  fn remove_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
+  fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()>;
+  fn update_description(&self, note_id: &NoteId, description: Option<&str>) -> ShizenResult<()>;
+  fn update_parent(&self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()>;
+  fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
+  fn remove_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
 
-  fn undo(&mut self) -> ShizenResult<()>;
-  fn redo(&mut self) -> ShizenResult<()>;
+  fn undo(&self) -> ShizenResult<()>;
+  fn redo(&self) -> ShizenResult<()>;
 
   // Delete
-  fn delete_note(&mut self, note_id: &NoteId) -> crate::ShizenResult<()>;
+  fn delete_note(&self, note_id: &NoteId) -> crate::ShizenResult<()>;
 }
 
 // TODO write down the sync strat (list of peers with their claimed sync version, request with stuff more, apply and overwrite conflicts for now, rewrite my own changes back on top)

@@ -1,12 +1,12 @@
 //! Result and error types for libshizen
 use thiserror::Error;
 
-use crate::entities::NoteId;
+use crate::{entities::NoteId, sync::SyncResponse};
 
 pub type ShizenResult<T> = std::result::Result<T, ShizenError>;
 
 // TODO thiserror
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug)]
 pub enum ShizenError {
   #[error("Error creating databse {}", .0)]
   ErrorCreatingDb(String),
@@ -34,5 +34,9 @@ pub enum ShizenError {
   #[error("Could not obtain lock for database")]
   CouldNotLockDatabase,
   #[error("Serialization/deserialization error")]
-  SerdeError,
+  SerdeError(#[from] serde_json::Error),
+  #[error("Could not connect to tcp socket: {:?}", .0)]
+  PeerTcpConnectionFailed(#[from] std::io::Error),
+  #[error("Expected response {}, but got response {:#?}", .0, .1)]
+  UnexpectedSyncProtocolResponse(String, SyncResponse),
 }

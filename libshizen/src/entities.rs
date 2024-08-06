@@ -23,7 +23,7 @@ impl Display for NoteId {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerId(pub Uuid);
 
 impl From<Uuid> for NoteId {

@@ -1,4 +1,5 @@
 //! Sqlite storage engine using rusqlite.
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, RwLock};
 
 use rusqlite::{Connection, Row};
@@ -7,10 +8,12 @@ use uuid::Uuid;
 
 use crate::entities::{Actions, Note, NoteId, PeerId};
 use crate::storage::TodoStorage;
+use crate::sync::SyncConnection;
 use crate::{ShizenError, ShizenResult};
 
 #[derive(Clone)]
 pub struct RusqliteStorage {
+  // TODO NOW change with connection pool (r2d2_sqlite)
   conn: Arc<RwLock<Connection>>,
 }
 
@@ -625,7 +628,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
 
 impl TodoStorage for RusqliteStorage {
   fn create_new_note(
-    &mut self,
+    &self,
     title: &str,
     description: Option<&str>,
     parent_id: Option<&NoteId>,
@@ -639,6 +642,15 @@ impl TodoStorage for RusqliteStorage {
 
     txn.commit()?;
     Ok(note)
+  }
+
+  fn add_peer<A: ToSocketAddrs>(&self, addr: A) -> ShizenResult<PeerId> {
+    let this_peer_id = self.get_peer_id()?;
+    let mut sync = SyncConnection::new(addr)?;
+    let peer_id = sync.peer_id_handshake(this_peer_id)?;
+
+    // TODO write to database.
+    Ok(peer_id)
   }
 
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>> {
@@ -732,7 +744,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(clock)
   }
 
-  fn update_title(&mut self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
+  fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
     let mut conn = self
       .conn
       .write()
@@ -747,11 +759,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn update_description(
-    &mut self,
-    note_id: &NoteId,
-    description: Option<&str>,
-  ) -> ShizenResult<()> {
+  fn update_description(&self, note_id: &NoteId, description: Option<&str>) -> ShizenResult<()> {
     let mut conn = self
       .conn
       .write()
@@ -764,7 +772,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn update_parent(&mut self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()> {
+  fn update_parent(&self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()> {
     let mut conn = self
       .conn
       .write()
@@ -777,7 +785,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn add_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
+  fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
     let mut conn = self
       .conn
       .write()
@@ -790,7 +798,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn remove_blocked_note(&mut self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
+  fn remove_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
     let mut conn = self
       .conn
       .write()
@@ -803,7 +811,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn undo(&mut self) -> ShizenResult<()> {
+  fn undo(&self) -> ShizenResult<()> {
     let mut conn = self
       .conn
       .write()
@@ -818,8 +826,7 @@ impl TodoStorage for RusqliteStorage {
         let undo_action_json: String = r.get(1)?;
         let clock: usize = r.get(2)?;
 
-        let undo_action: Actions =
-          serde_json::from_str(&undo_action_json).map_err(|_| ShizenError::SerdeError)?;
+        let undo_action: Actions = serde_json::from_str(&undo_action_json)?;
 
         return Ok((id_to_remove, undo_action, clock, undo_action_json));
       },
@@ -922,7 +929,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn redo(&mut self) -> ShizenResult<()> {
+  fn redo(&self) -> ShizenResult<()> {
     let mut conn = self
       .conn
       .write()
@@ -935,8 +942,7 @@ impl TodoStorage for RusqliteStorage {
       |r| -> ShizenResult<_> {
         let id_to_remove: u32 = r.get(0)?;
         let redo_action_json: String = r.get(1)?;
-        let redo_action: Actions =
-          serde_json::from_str(&redo_action_json).map_err(|_| ShizenError::SerdeError)?;
+        let redo_action: Actions = serde_json::from_str(&redo_action_json)?;
 
         return Ok((id_to_remove, redo_action));
       },
@@ -991,7 +997,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn delete_note(&mut self, note_id: &NoteId) -> ShizenResult<()> {
+  fn delete_note(&self, note_id: &NoteId) -> ShizenResult<()> {
     let mut conn = self
       .conn
       .write()

@@ -1,6 +1,7 @@
 pub mod entities;
 mod result;
 pub mod storage;
+mod sync;
 
 pub use result::*;
 

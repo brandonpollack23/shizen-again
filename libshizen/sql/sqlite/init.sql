@@ -7,6 +7,13 @@ CREATE TABLE IF NOT EXISTS SchemaVersion (
 INSERT INTO SchemaVersion
 VALUES (1, 1);
 
+-- Single row table of settings.
+CREATE TABLE IF NOT EXISTS LocalSettings (
+  -- The "version" of the database locally (used for sync).
+  clock INTEGER NOT NULL,
+  peer_id STRING NOT NULL
+)
+
 CREATE TABLE IF NOT EXISTS Notes (
   uuid TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -65,13 +72,10 @@ CREATE TABLE IF NOT EXISTS RedoMutations (
   action_json TEXT NOT NULL
 );
 
--- Single row table of settings.
-CREATE TABLE IF NOT EXISTS LocalSettings (
-  -- The "version" of the database locally (used for sync).
+CREATE TABLE IF NOT EXISTS Peers (
+  peer_id STRING NOT NULL,
   clock INTEGER NOT NULL,
-  peer_id STRING NOT NULL
-)
+);
+CREATE INDEX IF NOT EXISTS PeerIdIndex
+ON Dependencies (peer_id);
 
--- TODO next peers and sync.
--- first just sync peers.
--- then sync algorithm.
