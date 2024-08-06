@@ -1,13 +1,12 @@
 //! Sqlite storage engine using rusqlite.
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::{Arc, RwLock};
 
 use rusqlite::{Connection, Row};
-use serde::Serialize;
 use tracing::{info, trace};
 use uuid::Uuid;
 
-use crate::entities::{Actions, Note, NoteId, PeerId};
+use crate::entities::{Actions, Note, NoteId, PeerId, PeerInfo};
 use crate::storage::TodoStorage;
 use crate::sync::SyncConnection;
 use crate::{ShizenError, ShizenResult};
@@ -45,7 +44,7 @@ impl RusqliteStorage {
     }
 
     let conn = if let Some(p) = db_path {
-      if !p.exists() {
+      if !p.exists() && !p.to_str().unwrap().starts_with("file::memory:") {
         return Err(ShizenError::ErrorOpeningDb(format!(
           "No such file: {}",
           p.to_string_lossy()
@@ -778,6 +777,33 @@ impl TodoStorage for RusqliteStorage {
     Ok(clock)
   }
 
+  fn get_peers(&self) -> ShizenResult<Vec<PeerInfo>> {
+    let conn = self
+      .conn
+      .read()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+
+    let mut stmt = conn.prepare("SELECT peer_id, clock, addr FROM Peers")?;
+    let peer_infos: Result<Vec<PeerInfo>, _> = stmt
+      .query_map([], |r| {
+        // TODO error handle
+        let peer_id_str: String = r.get(0).unwrap();
+        let peer_id = PeerId(Uuid::parse_str(&peer_id_str).unwrap());
+        let clock: usize = r.get(1).unwrap();
+        let addr_json: String = r.get(2).unwrap();
+        let addr: SocketAddr = serde_json::from_str(&addr_json).unwrap();
+
+        Ok(PeerInfo {
+          peer_id,
+          clock,
+          addr,
+        })
+      })?
+      .collect();
+
+    Ok(peer_infos?)
+  }
+
   fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
     let mut conn = self
       .conn
@@ -1255,7 +1281,7 @@ mod test {
   #[test]
   #[traced_test]
   fn add_deps_work() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -1277,7 +1303,7 @@ mod test {
   #[test]
   #[traced_test]
   fn add_deps_loop_fails() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -1302,7 +1328,7 @@ mod test {
   #[test]
   #[traced_test]
   fn remove_deps_work() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -1325,7 +1351,7 @@ mod test {
   #[test]
   #[traced_test]
   fn remove_deps_loop_allows_adding_dep() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
     let picard_note = s
       .create_new_note("Picard", "captain of the enterprise".into(), None)
       .unwrap();
@@ -1352,7 +1378,7 @@ mod test {
   #[test]
   #[traced_test]
   fn undo_create() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
 
     let clock = s.get_clock().unwrap();
     assert_eq!(0, clock);
@@ -1467,7 +1493,7 @@ mod test {
   #[test]
   #[traced_test]
   fn clock_increments() {
-    let mut s = RusqliteStorage::open(None).unwrap();
+    let s = RusqliteStorage::open(None).unwrap();
 
     let clock = s.get_clock().unwrap();
     assert_eq!(clock, 0);

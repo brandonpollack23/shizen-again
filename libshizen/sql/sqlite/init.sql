@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS LocalSettings (
   -- The "version" of the database locally (used for sync).
   clock INTEGER NOT NULL,
   peer_id STRING NOT NULL
-)
+);
 
 CREATE TABLE IF NOT EXISTS Notes (
   uuid TEXT PRIMARY KEY,
@@ -75,8 +75,8 @@ CREATE TABLE IF NOT EXISTS RedoMutations (
 CREATE TABLE IF NOT EXISTS Peers (
   peer_id STRING NOT NULL,
   clock INTEGER NOT NULL,
-  addr STRING NOT NULL,
+  addr STRING NOT NULL
 );
 CREATE INDEX IF NOT EXISTS PeerIdIndex
-ON Dependencies (peer_id);
+ON Peers (peer_id);
 

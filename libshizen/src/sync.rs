@@ -17,7 +17,6 @@ use crate::{
 
 // TODO NOW peers and sync.
 // implement sync server side.
-// first just sync peers.
 // then sync algorithm.
 
 pub struct SyncConnection {
@@ -183,3 +182,36 @@ fn sync_protocol_rx(
 }
 
 // TODO write tests for syncing peers.
+#[cfg(test)]
+mod test {
+  use tracing_test::traced_test;
+
+  use crate::{
+    entities::PeerInfo,
+    storage::{rusqlite::RusqliteStorage, TodoStorage},
+  };
+
+  use super::SyncServer;
+
+  #[test]
+  #[traced_test]
+  fn peer_syncs() {
+    // use uri to share in memory database data https://sqlite.org/inmemorydb.html
+    let in_memory_uri = "file::memory:?cache=shared";
+    let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
+    let first_pid = first.get_peer_id().unwrap();
+    let _first_syncer =
+      SyncServer::listen_on_thread("localhost:1701", in_memory_uri.into()).unwrap();
+
+    let second = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
+
+    let second_pid = second.get_peer_id().unwrap();
+
+    let expected_first_pid = second.add_peer("localhost:1701").unwrap();
+    assert_eq!(expected_first_pid, first_pid);
+
+    let second_peer_read = &first.get_peers().unwrap()[0];
+    assert_eq!(second_peer_read.peer_id, second_pid);
+    assert_eq!(second_peer_read.clock, 0);
+  }
+}

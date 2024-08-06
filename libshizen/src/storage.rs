@@ -4,7 +4,7 @@ use std::net::ToSocketAddrs;
 use serde::Serialize;
 
 use crate::{
-  entities::{Note, NoteId, PeerId},
+  entities::{Note, NoteId, PeerId, PeerInfo},
   result::ShizenResult,
 };
 
@@ -35,6 +35,7 @@ pub trait TodoStorage {
   fn get_all_blocked(&self, note_id: &NoteId, recursive: bool) -> ShizenResult<Vec<Note>>;
   fn get_peer_id(&self) -> ShizenResult<PeerId>;
   fn get_clock(&self) -> ShizenResult<usize>;
+  fn get_peers(&self) -> ShizenResult<Vec<PeerInfo>>;
 
   // Update
   fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()>;

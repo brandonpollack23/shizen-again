@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -23,8 +23,15 @@ impl Display for NoteId {
   }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PeerId(pub Uuid);
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PeerInfo {
+  pub peer_id: PeerId,
+  pub clock: usize,
+  pub addr: SocketAddr,
+}
 
 impl From<Uuid> for NoteId {
   fn from(value: Uuid) -> Self {
