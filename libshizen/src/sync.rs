@@ -30,14 +30,18 @@ impl SyncConnection {
     Ok(SyncConnection { stream })
   }
 
-  pub fn peer_id_handshake(&mut self, this_peer_id: PeerId) -> ShizenResult<PeerId> {
+  pub fn peer_id_handshake(
+    &mut self,
+    this_peer_id: PeerId,
+    current_clock: usize,
+  ) -> ShizenResult<(PeerId, usize)> {
     let response = sync_protocol_tx(
       &mut self.stream,
-      &SyncRequest::PeerIdentificationHandshake(this_peer_id),
+      &SyncRequest::PeerIdentificationHandshake((this_peer_id, current_clock)),
     )?;
 
     match response {
-      SyncResponse::PeerIdentificationHandshakeResponse(peer_id) => return Ok(peer_id),
+      SyncResponse::PeerIdentificationHandshakeResponse(r) => return Ok(r),
       other => {
         return Err(ShizenError::UnexpectedSyncProtocolResponse(
           "PeerIdentificationHandshakeResponse".to_string(),
@@ -50,13 +54,13 @@ impl SyncConnection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum SyncRequest {
-  PeerIdentificationHandshake(PeerId),
+  PeerIdentificationHandshake((PeerId, usize)),
   Sync { last_sync_clock: usize },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum SyncResponse {
-  PeerIdentificationHandshakeResponse(PeerId),
+  PeerIdentificationHandshakeResponse((PeerId, usize)),
   SyncResponse,
 }
 
@@ -71,15 +75,16 @@ pub struct SyncServer {
 impl SyncServer {
   pub fn listen_on_thread<A: ToSocketAddrs>(
     addr: A,
-    database: &RusqliteStorage,
+    database_path: std::path::PathBuf,
   ) -> ShizenResult<SyncServer> {
     let server = TcpListener::bind(addr)?;
     server.set_nonblocking(true)?;
     let (kill_tx, kill_rx) = std::sync::mpsc::channel::<()>();
 
-    let this_peer_id = database.get_peer_id()?;
-
     let thread = thread::spawn(move || {
+      let database = RusqliteStorage::open(Some(&database_path)).unwrap();
+      let this_peer_id = database.get_peer_id().unwrap();
+
       loop {
         if let Ok(()) = kill_rx.try_recv() {
           break;
@@ -93,7 +98,7 @@ impl SyncServer {
           }
           Err(e) => error!("Tcp accept error occurred: {e:#?}"),
           Ok((socket, addr)) => {
-            if let Err(e) = Self::handle_request(socket, addr, &this_peer_id, database) {
+            if let Err(e) = Self::handle_request(socket, addr, &this_peer_id, &database) {
               error!("Error handling connection: {e:#?}");
             }
           }
@@ -110,7 +115,7 @@ impl SyncServer {
     this_peer_id: &PeerId,
     database: &RusqliteStorage,
   ) -> ShizenResult<()> {
-    sync_protocol_rx(&mut stream, this_peer_id, database)
+    sync_protocol_rx(&mut stream, &addr, this_peer_id, database)
   }
 }
 
@@ -149,6 +154,7 @@ fn serialize_message_to_stream<M: Serialize>(
 
 fn sync_protocol_rx(
   stream: &mut TcpStream,
+  addr: &SocketAddr,
   this_peer_id: &PeerId,
   database: &RusqliteStorage,
 ) -> ShizenResult<()> {
@@ -161,10 +167,12 @@ fn sync_protocol_rx(
   let request: SyncRequest = serde_json::from_slice(&request_bytes)?;
 
   match request {
-    SyncRequest::PeerIdentificationHandshake(other_peer_id) => {
-      // TODO when a peer requests handshake, we should add them as well or queue up some way to.
+    SyncRequest::PeerIdentificationHandshake((other_peer_id, other_clock)) => {
+      database.add_connected_peer(other_peer_id, other_clock, addr)?;
+
+      let current_clock = database.get_clock()?;
       serialize_message_to_stream(
-        &SyncResponse::PeerIdentificationHandshakeResponse(this_peer_id.clone()),
+        &SyncResponse::PeerIdentificationHandshakeResponse((this_peer_id.clone(), current_clock)),
         stream,
       )?;
     }
@@ -173,3 +181,5 @@ fn sync_protocol_rx(
 
   Ok(())
 }
+
+// TODO write tests for syncing peers.

@@ -3,6 +3,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, RwLock};
 
 use rusqlite::{Connection, Row};
+use serde::Serialize;
 use tracing::{info, trace};
 use uuid::Uuid;
 
@@ -13,7 +14,7 @@ use crate::{ShizenError, ShizenResult};
 
 #[derive(Clone)]
 pub struct RusqliteStorage {
-  // TODO NOW change with connection pool (r2d2_sqlite)
+  // TODO NOW remove lock since we just make one per thread anyway.
   conn: Arc<RwLock<Connection>>,
 }
 
@@ -646,11 +647,44 @@ impl TodoStorage for RusqliteStorage {
 
   fn add_peer<A: ToSocketAddrs>(&self, addr: A) -> ShizenResult<PeerId> {
     let this_peer_id = self.get_peer_id()?;
-    let mut sync = SyncConnection::new(addr)?;
-    let peer_id = sync.peer_id_handshake(this_peer_id)?;
+    let current_clock = self.get_clock()?;
+    let socket_addr = addr.to_socket_addrs().unwrap().next().unwrap();
+    let addr_json = serde_json::to_string(&socket_addr)?;
 
-    // TODO write to database.
+    let mut sync = SyncConnection::new(addr)?;
+    let (peer_id, clock) = sync.peer_id_handshake(this_peer_id, current_clock)?;
+
+    let conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+
+    conn.execute(
+      "INSERT INTO Peers (peer_id, clock, addr) VALUES (?, ?, ?)",
+      (peer_id.0.to_string(), clock, addr_json),
+    )?;
     Ok(peer_id)
+  }
+
+  fn add_connected_peer<A: ToSocketAddrs>(
+    &self,
+    peer_id: PeerId,
+    other_clock: usize,
+    addr: &A,
+  ) -> ShizenResult<()> {
+    let conn = self
+      .conn
+      .write()
+      .map_err(|_| ShizenError::CouldNotLockDatabase)?;
+
+    let socket_addr = addr.to_socket_addrs().unwrap().next().unwrap();
+    let addr_json = serde_json::to_string(&socket_addr)?;
+    conn.execute(
+      "INSERT INTO Peers (peer_id, clock, addr) VALUES (?, ?, ?)",
+      (peer_id.0.to_string(), other_clock, addr_json),
+    )?;
+
+    Ok(())
   }
 
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>> {

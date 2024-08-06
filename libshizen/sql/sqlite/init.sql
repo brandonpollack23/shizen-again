@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS RedoMutations (
 CREATE TABLE IF NOT EXISTS Peers (
   peer_id STRING NOT NULL,
   clock INTEGER NOT NULL,
+  addr STRING NOT NULL,
 );
 CREATE INDEX IF NOT EXISTS PeerIdIndex
 ON Dependencies (peer_id);
