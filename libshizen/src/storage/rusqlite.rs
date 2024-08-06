@@ -50,7 +50,10 @@ impl RusqliteStorage {
     }
 
     let conn = if let Some(p) = db_path {
-      if !p.exists() && !p.to_str().unwrap().starts_with("file::memory:") {
+      if !p.exists()
+        && !p.to_str().unwrap().starts_with("file::memory:")
+        && !p.to_str().unwrap().contains("mode=memory")
+      {
         return Err(ShizenError::ErrorOpeningDb(format!(
           "No such file: {}",
           p.to_string_lossy()

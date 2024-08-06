@@ -245,9 +245,9 @@ mod test {
 
   #[test]
   #[traced_test]
-  fn peer_syncs() {
+  fn peer_handshake() {
     // use uri to share in memory database data https://sqlite.org/inmemorydb.html
-    let in_memory_uri = "file::memory:?cache=shared";
+    let in_memory_uri = "file:peer_handshake?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let first_pid = first.get_peer_id().unwrap();
     let _first_syncer =
@@ -275,5 +275,28 @@ mod test {
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].peer_id, second_pid);
     assert_eq!(peers[0].clock, 0);
+  }
+
+  #[test]
+  #[traced_test]
+  fn peer_sync_one_way() {
+    // use uri to share in memory database data https://sqlite.org/inmemorydb.html
+    let in_memory_uri = "file:peer_sync_one_way?mode=memory&cache=shared";
+    let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
+    let _first_syncer =
+      SyncServer::listen_on_thread("localhost:1701", in_memory_uri.into()).unwrap();
+
+    let second = RusqliteStorage::open(None).unwrap();
+    let sync_peer_id = second.add_peer("localhost:1701").unwrap();
+    let peer = second.get_peer(&sync_peer_id).unwrap();
+
+    let picard = first
+      .create_new_note("Picard", Some("Captain"), None)
+      .unwrap();
+    let riker = first
+      .create_new_note("Riker", Some("Number One"), Some(&picard.id))
+      .unwrap();
+
+    second.sync_with_peer(&peer).unwrap();
   }
 }
