@@ -7,7 +7,7 @@ use rusqlite::{Connection, Row};
 use tracing::{info, trace};
 use uuid::Uuid;
 
-use crate::entities::{Actions, Note, NoteId, PeerId, PeerInfo};
+use crate::entities::{Action, Note, NoteId, PeerId, PeerInfo};
 use crate::storage::TodoStorage;
 use crate::sync::SyncConnection;
 use crate::{ShizenError, ShizenResult};
@@ -330,7 +330,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       .collect::<ShizenResult<Vec<_>>>()
   }
 
-  fn insert_mutations(conn: &Connection, actions: &[Actions]) -> ShizenResult<()> {
+  fn insert_mutations(conn: &Connection, actions: &[Action]) -> ShizenResult<()> {
     let mut clock: usize = Self::get_clock_txn(conn)?;
 
     for action in actions {
@@ -365,7 +365,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
 
   fn create_new_note_txn(
     txn: &Connection,
-    id: Option<Uuid>,
+    id: Option<&NoteId>,
     title: &str,
     description: Option<&str>,
     parent_id: Option<&NoteId>,
@@ -376,7 +376,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       }
     }
 
-    let uuid = id.unwrap_or(Uuid::new_v4());
+    let uuid = id.cloned().unwrap_or_else(|| NoteId(Uuid::new_v4()));
     txn.execute(
       "INSERT INTO Notes (uuid, title, description) VALUES (?, ?, ?)",
       (uuid.to_string(), title, description),
@@ -395,8 +395,8 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
 
     Self::insert_mutations(
       txn,
-      &[Actions::CreateNote {
-        id: NoteId(uuid),
+      &[Action::CreateNote {
+        id: uuid.clone(),
         parent: parent_id.cloned(),
         title: title.to_string(),
         description: description.map(|s| s.to_string()),
@@ -404,7 +404,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     )?;
 
     Ok(Note {
-      id: NoteId(uuid),
+      id: uuid,
       title: title.to_string(),
       description: description.map(|s| s.to_string()),
       parent_id: parent_id.cloned(),
@@ -430,7 +430,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
 
     Self::insert_mutations(
       txn,
-      &[Actions::UpdateTitle {
+      &[Action::UpdateTitle {
         id: note_id.clone(),
         new_title: title.to_string(),
         old_title,
@@ -448,7 +448,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     let old_description = Self::load_note_conn(txn, note_id)?.description;
     Self::insert_mutations(
       txn,
-      &[Actions::UpdateDescription {
+      &[Action::UpdateDescription {
         id: note_id.clone(),
         old_description,
         new_description: description.map(|d| d.to_string()),
@@ -482,7 +482,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     let old_parent = Self::load_note_conn(txn, note_id)?.parent_id;
     Self::insert_mutations(
       txn,
-      &[Actions::ChangeParent {
+      &[Action::ChangeParent {
         id: note_id.clone(),
         old_parent,
         new_parent: parent.cloned(),
@@ -534,7 +534,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
 
     Self::insert_mutations(
       txn,
-      &[Actions::AddDependency {
+      &[Action::AddDependency {
         blocker: note_id.clone(),
         blockee: blocked_note.clone(),
       }],
@@ -569,7 +569,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
 
     Self::insert_mutations(
       txn,
-      &[Actions::RemoveDependency {
+      &[Action::RemoveDependency {
         blocker: note_id.clone(),
         blockee: blocked_note.clone(),
       }],
@@ -616,7 +616,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       [note_id.0.to_string()],
     )?;
 
-    Self::insert_mutations(txn, &[Actions::DeleteNote { note: old_note }])?;
+    Self::insert_mutations(txn, &[Action::DeleteNote { note: old_note }])?;
 
     Ok(())
   }
@@ -642,8 +642,8 @@ impl TodoStorage for RusqliteStorage {
     let socket_addr = addr.to_socket_addrs().unwrap().next().unwrap();
     let addr_json = serde_json::to_string(&socket_addr)?;
 
-    let mut sync = SyncConnection::new(addr)?;
-    let peer_id = sync.peer_id_handshake(this_peer_id)?;
+    let mut sync = SyncConnection::new(&addr)?;
+    let peer_id = sync.peer_id_handshake(&this_peer_id)?;
 
     let conn = self.conn.borrow_mut();
 
@@ -763,6 +763,31 @@ impl TodoStorage for RusqliteStorage {
     Ok(peer_infos?)
   }
 
+  fn get_peer(&self, peer_id: &PeerId) -> ShizenResult<PeerInfo> {
+    let conn = self.conn.borrow();
+
+    let peer_info = conn.query_row(
+      "SELECT peer_id, clock, addr FROM Peers WHERE peer_id = ?",
+      [peer_id.0.to_string()],
+      |r| {
+        // TODO error handle
+        let peer_id_str: String = r.get(0).unwrap();
+        let peer_id = PeerId(Uuid::parse_str(&peer_id_str).unwrap());
+        let clock: usize = r.get(1).unwrap();
+        let addr_json: String = r.get(2).unwrap();
+        let addr: SocketAddr = serde_json::from_str(&addr_json).unwrap();
+
+        Ok(PeerInfo {
+          peer_id,
+          clock,
+          addr,
+        })
+      },
+    )?;
+
+    Ok(peer_info)
+  }
+
   fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
@@ -826,26 +851,26 @@ impl TodoStorage for RusqliteStorage {
         let undo_action_json: String = r.get(1)?;
         let clock: usize = r.get(2)?;
 
-        let undo_action: Actions = serde_json::from_str(&undo_action_json)?;
+        let undo_action: Action = serde_json::from_str(&undo_action_json)?;
 
         Ok((id_to_remove, undo_action, clock, undo_action_json))
       },
     )?;
 
     match undo_action {
-      Actions::CreateNote { id, parent, .. } => {
+      Action::CreateNote { id, parent, .. } => {
         txn.execute("DELETE FROM Notes WHERE uuid = ?", [id.0.to_string()])?;
         if parent.is_some() {
           txn.execute("DELETE FROM Children WHERE child = ?", [id.0.to_string()])?;
         }
       }
-      Actions::UpdateTitle { id, old_title, .. } => {
+      Action::UpdateTitle { id, old_title, .. } => {
         txn.execute(
           "UPDATE Notes SET title = ? WHERE uuid = ?",
           [old_title, id.0.to_string()],
         )?;
       }
-      Actions::UpdateDescription {
+      Action::UpdateDescription {
         id,
         old_description,
         ..
@@ -855,7 +880,7 @@ impl TodoStorage for RusqliteStorage {
           (old_description, id.0.to_string()),
         )?;
       }
-      Actions::ChangeParent {
+      Action::ChangeParent {
         id,
         old_parent,
         new_parent,
@@ -872,19 +897,19 @@ impl TodoStorage for RusqliteStorage {
           )?;
         }
       }
-      Actions::AddDependency { blocker, blockee } => {
+      Action::AddDependency { blocker, blockee } => {
         txn.execute(
           "DELETE FROM Dependencies WHERE blocker = ? and blockee = ?",
           (blocker.0.to_string(), blockee.0.to_string()),
         )?;
       }
-      Actions::RemoveDependency { blocker, blockee } => {
+      Action::RemoveDependency { blocker, blockee } => {
         txn.execute(
           "INSERT INTO Dependencies (blocker, blockee) VALUES (?, ?)",
           (blocker.0.to_string(), blockee.0.to_string()),
         )?;
       }
-      Actions::DeleteNote { note } => {
+      Action::DeleteNote { note } => {
         txn.execute(
           "INSERT INTO Notes (uuid, title, description) VALUES (?, ?, ?)",
           (note.id.0.to_string(), note.title, note.description),
@@ -939,14 +964,14 @@ impl TodoStorage for RusqliteStorage {
       |r| -> ShizenResult<_> {
         let id_to_remove: u32 = r.get(0)?;
         let redo_action_json: String = r.get(1)?;
-        let redo_action: Actions = serde_json::from_str(&redo_action_json)?;
+        let redo_action: Action = serde_json::from_str(&redo_action_json)?;
 
         Ok((id_to_remove, redo_action))
       },
     )?;
 
     match redo_action {
-      Actions::CreateNote {
+      Action::CreateNote {
         id,
         parent,
         title,
@@ -954,32 +979,32 @@ impl TodoStorage for RusqliteStorage {
       } => {
         Self::create_new_note_txn(
           &txn,
-          Some(id.0),
+          Some(&id),
           &title,
           description.as_deref(),
           parent.as_ref(),
         )?;
       }
-      Actions::UpdateTitle { id, old_title, .. } => {
+      Action::UpdateTitle { id, old_title, .. } => {
         Self::update_title_txn(&txn, &id, &old_title)?;
       }
-      Actions::UpdateDescription {
+      Action::UpdateDescription {
         id,
         old_description,
         ..
       } => {
         Self::update_description_txn(&txn, &id, old_description.as_deref())?;
       }
-      Actions::ChangeParent { id, old_parent, .. } => {
+      Action::ChangeParent { id, old_parent, .. } => {
         Self::change_parent_txn(&txn, &id, old_parent.as_ref())?;
       }
-      Actions::AddDependency { blocker, blockee } => {
+      Action::AddDependency { blocker, blockee } => {
         Self::add_dep_txn(&txn, &blocker, &blockee)?;
       }
-      Actions::RemoveDependency { blocker, blockee } => {
+      Action::RemoveDependency { blocker, blockee } => {
         Self::remove_dep_txn(&txn, &blocker, &blockee)?;
       }
-      Actions::DeleteNote { note } => {
+      Action::DeleteNote { note } => {
         Self::delete_note_txn(&txn, &note.id)?;
       }
     }
@@ -998,6 +1023,69 @@ impl TodoStorage for RusqliteStorage {
 
     txn.commit()?;
 
+    Ok(())
+  }
+
+  fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<crate::sync::SyncResults> {
+    let mut conn = self.conn.borrow_mut();
+    let mut sync_conn = SyncConnection::new(&peer.addr)?;
+    sync_conn.sync_with_peer(&peer, self)
+  }
+
+  fn apply_action(&self, action: &Action) -> ShizenResult<()> {
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
+
+    match action {
+      Action::CreateNote {
+        id,
+        title,
+        description,
+        parent,
+      } => {
+        Self::create_new_note_txn(
+          &txn,
+          Some(id),
+          title,
+          description.as_ref().map(|d| d.as_str()),
+          parent.as_ref(),
+        )?;
+      }
+      Action::UpdateTitle {
+        id,
+        old_title,
+        new_title,
+      } => {
+        Self::update_title_txn(&txn, id, new_title)?;
+      }
+      Action::UpdateDescription {
+        id,
+        old_description,
+        new_description,
+      } => {
+        Self::update_description_txn(&txn, id, new_description.as_ref().map(|d| d.as_str()))?;
+      }
+      Action::ChangeParent {
+        id,
+        old_parent,
+        new_parent,
+      } => {
+        // TODO NOW this should take old parent since this might be from sync (same for ALL update_txn operations).
+        // Test this case
+        Self::change_parent_txn(&txn, id, new_parent.as_ref())?;
+      }
+      Action::AddDependency { blocker, blockee } => {
+        Self::add_dep_txn(&txn, blocker, blockee)?;
+      }
+      Action::RemoveDependency { blocker, blockee } => {
+        Self::remove_dep_txn(&txn, blocker, blockee)?;
+      }
+      Action::DeleteNote { note } => {
+        Self::delete_note_txn(&txn, &note.id)?;
+      }
+    }
+
+    txn.commit();
     Ok(())
   }
 }

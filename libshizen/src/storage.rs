@@ -1,10 +1,10 @@
 //! Generic storage for TODOs
 use std::net::ToSocketAddrs;
 
-
 use crate::{
-  entities::{Note, NoteId, PeerId, PeerInfo},
+  entities::{Action, Note, NoteId, PeerId, PeerInfo},
   result::ShizenResult,
+  sync::SyncResults,
 };
 
 pub mod rusqlite;
@@ -35,6 +35,7 @@ pub trait TodoStorage {
   fn get_peer_id(&self) -> ShizenResult<PeerId>;
   fn get_clock(&self) -> ShizenResult<usize>;
   fn get_peers(&self) -> ShizenResult<Vec<PeerInfo>>;
+  fn get_peer(&self, peer_id: &PeerId) -> ShizenResult<PeerInfo>;
 
   // Update
   fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()>;
@@ -43,11 +44,16 @@ pub trait TodoStorage {
   fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
   fn remove_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
 
+  fn apply_action(&self, action: &Action) -> ShizenResult<()>;
+
   fn undo(&self) -> ShizenResult<()>;
   fn redo(&self) -> ShizenResult<()>;
 
   // Delete
   fn delete_note(&self, note_id: &NoteId) -> crate::ShizenResult<()>;
+
+  // Sync
+  fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<SyncResults>;
 }
 
 // TODO write down the sync strat (list of peers with their claimed sync version, request with stuff more, apply and overwrite conflicts for now, rewrite my own changes back on top)

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 
 use crate::{
-  entities::{PeerId, PeerInfo},
+  entities::{Action, PeerId, PeerInfo},
   storage::{rusqlite::RusqliteStorage, TodoStorage},
   ShizenError, ShizenResult,
 };
@@ -20,15 +20,15 @@ pub struct SyncConnection {
 }
 
 impl SyncConnection {
-  pub fn new<A: ToSocketAddrs>(addr: A) -> ShizenResult<SyncConnection> {
+  pub fn new<A: ToSocketAddrs>(addr: &A) -> ShizenResult<SyncConnection> {
     let stream = TcpStream::connect(addr)?;
     Ok(SyncConnection { stream })
   }
 
-  pub fn peer_id_handshake(&mut self, this_peer_id: PeerId) -> ShizenResult<PeerId> {
+  pub fn peer_id_handshake(&mut self, this_peer_id: &PeerId) -> ShizenResult<PeerId> {
     let response = sync_protocol_tx(
       &mut self.stream,
-      &SyncRequest::PeerIdentificationHandshake(this_peer_id),
+      &SyncRequest::PeerIdentificationHandshake(this_peer_id.clone()),
     )?;
 
     match response {
@@ -40,10 +40,48 @@ impl SyncConnection {
     }
   }
 
-  pub fn sync_with_peer(&mut self, peer: &PeerInfo) -> ShizenResult<SyncResults> {
+  pub fn sync_with_peer(
+    &mut self,
+    peer: &PeerInfo,
+    database: &RusqliteStorage,
+  ) -> ShizenResult<SyncResults> {
     // TODO
     // 1. Check that peer is added to peers table, if not handshake it.
+    let peer = {
+      let stored_peer_info = database.get_peer(&peer.peer_id);
+      if let Err(_) = stored_peer_info {
+        let this_peer_id = database.get_peer_id()?;
+        let peer_id = self.peer_id_handshake(&this_peer_id)?;
+        database.get_peer(&peer_id)?
+      } else {
+        stored_peer_info.unwrap()
+      }
+    };
+
     // 2. Request all changes since last synced change
+    let response = sync_protocol_tx(
+      &mut self.stream,
+      &SyncRequest::Sync {
+        last_sync_clock: peer.clock,
+      },
+    )?;
+
+    let changes = match response {
+      SyncResponse::PeerIdentificationHandshakeResponse(_) => {
+        return Err(ShizenError::UnexpectedSyncProtocolResponse(
+          "SyncResponse".to_string(),
+          response,
+        ));
+      }
+      SyncResponse::SyncResponse { changes } => changes,
+    };
+
+    // Insert each of these in the database
+    for change_json in &changes {
+      let change: Action = serde_json::from_str(&change_json)?;
+      database.apply_action(&change)?;
+    }
+
     // 3. Rebase our changes on top of these and increment our version to match.
     // 4. Update the synced version of this peer in the peers table
     // 5. OPTIONAL in the recieving in notify of some way to request sync back.
@@ -60,7 +98,10 @@ pub enum SyncRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncResponse {
   PeerIdentificationHandshakeResponse(PeerId),
-  SyncResponse,
+  SyncResponse {
+    /// Vec of encoded change jsons (same as in undo table)
+    changes: Vec<String>,
+  },
 }
 
 pub struct SyncResults {}

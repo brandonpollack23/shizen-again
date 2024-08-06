@@ -58,7 +58,7 @@ impl From<PeerId> for Uuid {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) enum Actions {
+pub(crate) enum Action {
   CreateNote {
     id: NoteId,
     title: String,
