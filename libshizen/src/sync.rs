@@ -340,12 +340,62 @@ mod test {
     assert_eq!(sync_results.updated_peer_clock, 2);
 
     let synced_notes = second.load_all_notes().unwrap();
+    assert_eq!(synced_notes.len(), 2);
+
     let picard_synced = synced_notes.iter().find(|n| n.title == "Picard").unwrap();
     let riker_synced = synced_notes.iter().find(|n| n.title == "Riker").unwrap();
     assert_eq!(picard, picard_synced.clone());
     assert_eq!(riker, riker_synced.clone());
   }
 
-  // TODO do sync with local added notes.
+  #[test]
+  #[traced_test]
+  fn peer_sync_local_added_notes_one_way() {
+    // use uri to share in memory database data https://sqlite.org/inmemorydb.html
+    let in_memory_uri = "file:peer_sync_local_added_notes_one_way?mode=memory&cache=shared";
+    let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
+    let _first_syncer =
+      SyncServer::listen_on_thread("localhost:1703", in_memory_uri.into()).unwrap();
+
+    let second = RusqliteStorage::open(None).unwrap();
+    let sync_peer_id = second.add_peer("localhost:1703").unwrap();
+    let peer = second.get_peer(&sync_peer_id).unwrap();
+
+    let picard = first
+      .create_new_note("Picard", Some("Captain"), None)
+      .unwrap();
+    let riker = first
+      .create_new_note("Riker", Some("Number One"), Some(&picard.id))
+      .unwrap();
+    let picard = first.load_note(&picard.id).unwrap();
+
+    let locally_added_bev = second.create_new_note("Bev", Some("Doc"), None).unwrap();
+    let locally_added_wes = second
+      .create_new_note("Wes", Some("Bearded"), None)
+      .unwrap();
+
+    let sync_results = second.sync_with_peer(&peer).unwrap();
+    assert_eq!(sync_results.num_changes, 2);
+    assert_eq!(sync_results.updated_peer_clock, 2);
+
+    let all_notes_second = second.load_all_notes().unwrap();
+    let picard_synced = all_notes_second
+      .iter()
+      .find(|n| n.title == "Picard")
+      .unwrap();
+    let riker_synced = all_notes_second
+      .iter()
+      .find(|n| n.title == "Riker")
+      .unwrap();
+    let bev_after_sync = all_notes_second.iter().find(|n| n.title == "Bev").unwrap();
+    let wes_after_sync = all_notes_second.iter().find(|n| n.title == "Wes").unwrap();
+    assert_eq!(all_notes_second.len(), 4);
+
+    assert_eq!(picard, picard_synced.clone());
+    assert_eq!(riker, riker_synced.clone());
+    assert_eq!(locally_added_bev, bev_after_sync.clone());
+    assert_eq!(locally_added_wes, wes_after_sync.clone());
+  }
+
   // TODO do sync with all updates done locally and remotely.
 }

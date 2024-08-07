@@ -1083,7 +1083,7 @@ impl TodoStorage for RusqliteStorage {
     }
 
     txn.execute("DELETE FROM RedoMutations WHERE id = ?", [id_to_remove])?;
-    let new_clock = self.get_clock()?;
+    let new_clock = Self::get_clock_txn(&txn)?;
 
     txn.commit()?;
     Ok(new_clock)
