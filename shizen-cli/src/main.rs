@@ -47,6 +47,10 @@ enum Commands {
   #[command(visible_alias = "h")]
   History,
   RedoQueue,
+  Serve {
+    #[arg(short, long, default_value_t = 1701u16)]
+    port: u16,
+  },
 }
 
 #[derive(Args, Debug, PartialEq, Eq)]
@@ -190,6 +194,12 @@ fn main() {
           serde_json::to_string_pretty(&m).expect("Error formatting json")
         );
       }
+    }
+    Commands::Serve { port } => {
+      let mut server =
+        libshizen::SyncServer::listen_on_thread(("localhost", port), cli.database_path.into())
+          .expect("Could not create server");
+      server.join();
     }
   }
 }

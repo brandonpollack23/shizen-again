@@ -4,6 +4,7 @@ pub mod storage;
 mod sync;
 
 pub use result::*;
+pub use sync::SyncServer;
 
 pub type DefaultStorage = storage::rusqlite::RusqliteStorage;
 

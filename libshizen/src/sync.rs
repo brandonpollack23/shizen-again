@@ -194,6 +194,12 @@ impl SyncServer {
     Ok(SyncServer { thread, kill_tx })
   }
 
+  pub fn join(&mut self) {
+    if let Err(e) = self.thread.take().unwrap().join() {
+      error!("Error when joining sync server thread: {e:#?}");
+    }
+  }
+
   fn handle_request(
     mut stream: TcpStream,
     this_peer_id: &PeerId,
@@ -209,9 +215,7 @@ impl Drop for SyncServer {
       error!("Error when killing sync server: {e:#?}");
     }
 
-    if let Err(e) = self.thread.take().unwrap().join() {
-      error!("Error when joining sync server thread: {e:#?}");
-    }
+    self.join();
   }
 }
 
