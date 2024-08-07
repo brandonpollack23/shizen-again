@@ -563,6 +563,4 @@ mod test {
     let picard_readback_after_undo = first.load_note(&picard.id).unwrap();
     assert_eq!(picard_readback_after_undo.title, "Picard");
   }
-
-  // TODO do sync with all updates done locally and remotely.
 }
