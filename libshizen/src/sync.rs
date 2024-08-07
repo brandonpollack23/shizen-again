@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, trace};
 
 use crate::{
   entities::{Action, PeerId, PeerInfo},
@@ -25,6 +25,7 @@ impl SyncConnection {
   pub fn new<A: ToSocketAddrs>(
     this_peer_id: &PeerId,
     addr: A,
+    // TODO NOW change to just a port and let the ip come from the request.
     this_addr: Option<A>,
   ) -> ShizenResult<SyncConnection> {
     let this_peer_id = this_peer_id.clone();
@@ -72,13 +73,13 @@ impl SyncConnection {
     )?;
 
     let (clock, changes) = match response {
-      SyncResponse::PeerIdentificationHandshakeResponse(_) => {
+      SyncResponse::SyncResponse { clock, changes } => (clock, changes),
+      other => {
         return Err(ShizenError::UnexpectedSyncProtocolResponse(
           "SyncResponse".to_string(),
-          response,
+          other,
         ));
       }
-      SyncResponse::SyncResponse { clock, changes } => (clock, changes),
     };
 
     info!(
@@ -358,7 +359,7 @@ mod test {
       .unwrap();
     let picard = first.load_note(&picard.id).unwrap();
 
-    let sync_results = second.sync_with_peer(&peer, None).unwrap();
+    let sync_results = second.sync_with_peer(&peer).unwrap();
     assert_eq!(sync_results.num_changes, 2);
     assert_eq!(sync_results.updated_peer_clock, 2);
 
@@ -397,7 +398,7 @@ mod test {
       .create_new_note("Wes", Some("Bearded"), None)
       .unwrap();
 
-    let sync_results = second.sync_with_peer(&peer, None).unwrap();
+    let sync_results = second.sync_with_peer(&peer).unwrap();
     assert_eq!(sync_results.num_changes, 2);
     assert_eq!(sync_results.updated_peer_clock, 2);
 
@@ -425,13 +426,14 @@ mod test {
   fn local_title_update_sync() {
     // use uri to share in memory database data https://sqlite.org/inmemorydb.html
     let in_memory_uri = "file:local_title_update_sync?mode=memory&cache=shared";
+    let in_memory_uri2 = "file:local_title_update_sync_second?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
       SyncServer::listen_on_thread("localhost:1704", in_memory_uri.into()).unwrap();
+    let second = RusqliteStorage::open(Some(&in_memory_uri2.into())).unwrap();
     let _second_syncer =
-      SyncServer::listen_on_thread("localhost:1804", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread("localhost:1804", in_memory_uri2.into()).unwrap();
 
-    let second = RusqliteStorage::open(None).unwrap();
     let sync_peer_id = second
       .add_peer("localhost:1704", Some("localhost:1804"))
       .unwrap();
@@ -440,27 +442,74 @@ mod test {
     let picard = first
       .create_new_note("Picard", Some("Captain"), None)
       .unwrap();
-    let riker = first
+    let _riker = first
       .create_new_note("Riker", Some("Number One"), Some(&picard.id))
       .unwrap();
     let picard = first.load_note(&picard.id).unwrap();
 
-    let sync_results = second
-      .sync_with_peer(&peer, Some("localhost:1804"))
-      .unwrap();
+    let sync_results = second.sync_with_peer(&peer).unwrap();
     assert_eq!(sync_results.num_changes, 2);
     assert_eq!(sync_results.updated_peer_clock, 2);
 
     // first.update_title(&picard.id, "Positronic").unwrap();
     second.update_title(&picard.id, "Locutus").unwrap();
+    let second_clock = second.get_clock().unwrap();
+    assert_eq!(second_clock, 3);
+    let changes_that_would_sync = second.load_all_changes_since_clock(2).unwrap();
+    assert_eq!(changes_that_would_sync.len(), 1);
 
     let second_peer_info = first.get_peer(&second.get_peer_id().unwrap()).unwrap();
-    let backsync_results = first
-      .sync_with_peer(&second_peer_info, Some("localhost:1804"))
-      .unwrap();
+    let backsync_results = first.sync_with_peer(&second_peer_info).unwrap();
     assert_eq!(backsync_results.num_changes, 1);
-    assert_eq!(sync_results.updated_peer_clock, 3);
+    assert_eq!(sync_results.updated_peer_clock, 2);
   }
+
+  #[test]
+  #[traced_test]
+  fn local_desc_update_sync() {
+    // use uri to share in memory database data https://sqlite.org/inmemorydb.html
+    let in_memory_uri = "file:local_desc_update_sync?mode=memory&cache=shared";
+    let in_memory_uri2 = "file:local_desc_update_sync2?mode=memory&cache=shared";
+    let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
+    let _first_syncer =
+      SyncServer::listen_on_thread("localhost:1705", in_memory_uri.into()).unwrap();
+
+    let second = RusqliteStorage::open(Some(&in_memory_uri2.into())).unwrap();
+    let _second_syncer =
+      SyncServer::listen_on_thread("localhost:1805", in_memory_uri2.into()).unwrap();
+    let first_sync_peer_id = second
+      .add_peer("localhost:1705", Some("localhost:1805"))
+      .unwrap();
+    let first_peer = second.get_peer(&first_sync_peer_id).unwrap();
+
+    let picard = first
+      .create_new_note("Picard", Some("Captain"), None)
+      .unwrap();
+    let _riker = first
+      .create_new_note("Riker", Some("Number One"), Some(&picard.id))
+      .unwrap();
+    let picard = first.load_note(&picard.id).unwrap();
+
+    let sync_results = second.sync_with_peer(&first_peer).unwrap();
+    assert_eq!(sync_results.num_changes, 2);
+    assert_eq!(sync_results.updated_peer_clock, 2);
+
+    // first.update_desc(&picard.id, "Positronic").unwrap();
+    second
+      .update_description(&picard.id, Some("of borg"))
+      .unwrap();
+    let second_clock = second.get_clock().unwrap();
+    assert_eq!(second_clock, 3);
+    let changes_that_would_sync = second.load_all_changes_since_clock(2).unwrap();
+    assert_eq!(changes_that_would_sync.len(), 1);
+
+    let second_peer_info = first.get_peer(&second.get_peer_id().unwrap()).unwrap();
+    let backsync_results = first.sync_with_peer(&second_peer_info).unwrap();
+    assert_eq!(backsync_results.num_changes, 1);
+    assert_eq!(sync_results.updated_peer_clock, 2);
+  }
+
+  // TODO local and remote title update takes local change.
 
   // TODO do sync with all updates done locally and remotely.
 }

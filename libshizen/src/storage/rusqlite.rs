@@ -13,6 +13,8 @@ use crate::storage::TodoStorage;
 use crate::sync::{SyncConnection, SyncResults};
 use crate::{ShizenError, ShizenResult};
 
+// TODO trace logging
+
 macro_rules! sqlite_str {
   ($path:expr) => {
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), $path))
@@ -387,6 +389,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     }
 
     let uuid = id.cloned().unwrap_or_else(|| NoteId(Uuid::new_v4()));
+    trace!("Creating note: {title} {description:?}");
     txn.execute(
       "INSERT INTO Notes (uuid, title, description) VALUES (?, ?, ?)",
       (uuid.to_string(), title, description),
@@ -722,8 +725,8 @@ impl TodoStorage for RusqliteStorage {
     let txn = conn.transaction()?;
 
     let actions: ShizenResult<Vec<_>> = txn
-      .prepare("SELECT action_json FROM Mutations WHERE clock >= clock ORDER BY clock ASC")?
-      .query_and_then([], |r| -> ShizenResult<_> {
+      .prepare("SELECT action_json FROM Mutations WHERE clock >= ? ORDER BY clock ASC")?
+      .query_and_then([clock], |r| -> ShizenResult<_> {
         let action_json: String = r.get(0)?;
         let action: Action = serde_json::from_str(&action_json)?;
         Ok(action)
@@ -1104,20 +1107,12 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn sync_with_peer<A: ToSocketAddrs>(
-    &self,
-    peer: &PeerInfo,
-    local_server_addr: Option<A>,
-  ) -> ShizenResult<SyncResults> {
+  fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<SyncResults> {
     info!("Beginning sync with peer: {peer:#?}");
 
     let this_peer_id = self.get_peer_id()?;
     let peer_addr = self.get_peer(&peer.peer_id)?.addr;
-    let mut sync_conn = SyncConnection::new(
-      &this_peer_id,
-      peer_addr,
-      local_server_addr.map(|a| a.to_socket_addrs().unwrap().next().unwrap()),
-    )?;
+    let mut sync_conn = SyncConnection::new(&this_peer_id, peer_addr, None)?;
 
     // Check that peer is added to peers table, if not handshake it.
     let peer = {
