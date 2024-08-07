@@ -25,10 +25,18 @@ impl SyncConnection {
     Ok(SyncConnection { stream })
   }
 
-  pub fn peer_id_handshake(&mut self, this_peer_id: &PeerId) -> ShizenResult<PeerId> {
+  pub fn peer_id_handshake<A: ToSocketAddrs>(
+    &mut self,
+    this_peer_id: &PeerId,
+    local_server_address: Option<A>,
+  ) -> ShizenResult<PeerId> {
     let response = sync_protocol_tx(
       &mut self.stream,
-      &SyncRequest::PeerIdentificationHandshake(this_peer_id.clone()),
+      &SyncRequest::PeerIdentificationHandshake {
+        local_peer_id: this_peer_id.clone(),
+        local_server_address: local_server_address
+          .map(|a| a.to_socket_addrs().unwrap().next().unwrap()),
+      },
     )?;
 
     match response {
@@ -40,10 +48,11 @@ impl SyncConnection {
     }
   }
 
-  pub fn sync_with_peer(
+  pub fn sync_with_peer<A: ToSocketAddrs>(
     &mut self,
     peer: &PeerInfo,
     database: &RusqliteStorage,
+    local_server_address: Option<A>,
   ) -> ShizenResult<SyncResults> {
     info!("Beginning sync with peer: {peer:#?}");
 
@@ -54,7 +63,7 @@ impl SyncConnection {
         warn!("Peer is not in the database, handshaking...");
 
         let this_peer_id = database.get_peer_id()?;
-        let peer_id = self.peer_id_handshake(&this_peer_id)?;
+        let peer_id = self.peer_id_handshake(&this_peer_id, local_server_address)?;
         database.get_peer(&peer_id)?
       } else {
         stored_peer_info.unwrap()
@@ -123,8 +132,13 @@ impl SyncConnection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncRequest {
-  PeerIdentificationHandshake(PeerId),
-  Sync { last_sync_clock: usize },
+  PeerIdentificationHandshake {
+    local_peer_id: PeerId,
+    local_server_address: Option<SocketAddr>,
+  },
+  Sync {
+    last_sync_clock: usize,
+  },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,8 +185,8 @@ impl SyncServer {
             continue;
           }
           Err(e) => error!("Tcp accept error occurred: {e:#?}"),
-          Ok((socket, addr)) => {
-            if let Err(e) = Self::handle_request(socket, addr, &this_peer_id, &database) {
+          Ok((socket, _addr)) => {
+            if let Err(e) = Self::handle_request(socket, &this_peer_id, &database) {
               error!("Error handling connection: {e:#?}");
             }
           }
@@ -185,11 +199,10 @@ impl SyncServer {
 
   fn handle_request(
     mut stream: TcpStream,
-    addr: SocketAddr,
     this_peer_id: &PeerId,
     database: &RusqliteStorage,
   ) -> ShizenResult<()> {
-    sync_protocol_rx(&mut stream, &addr, this_peer_id, database)
+    sync_protocol_rx(&mut stream, this_peer_id, database)
   }
 }
 
@@ -237,7 +250,6 @@ fn serialize_message_to_stream<M: Serialize>(
 
 fn sync_protocol_rx(
   stream: &mut TcpStream,
-  addr: &SocketAddr,
   this_peer_id: &PeerId,
   database: &RusqliteStorage,
 ) -> ShizenResult<()> {
@@ -250,9 +262,14 @@ fn sync_protocol_rx(
   let request: SyncRequest = serde_json::from_slice(&request_bytes)?;
 
   match request {
-    SyncRequest::PeerIdentificationHandshake(other_peer_id) => {
+    SyncRequest::PeerIdentificationHandshake {
+      local_peer_id: other_peer_id,
+      local_server_address: other_server_address,
+    } => {
       let other_clock = 0; // No syncing done yet, always start at 0.
-      database.add_connected_peer(other_peer_id, other_clock, addr)?;
+      if let Some(a) = other_server_address {
+        database.add_connected_peer(other_peer_id, other_clock, &a)?;
+      }
 
       serialize_message_to_stream(
         &SyncResponse::PeerIdentificationHandshakeResponse(this_peer_id.clone()),
@@ -285,16 +302,21 @@ mod test {
   fn peer_handshake() {
     // use uri to share in memory database data https://sqlite.org/inmemorydb.html
     let in_memory_uri = "file:peer_handshake?mode=memory&cache=shared";
+    let in_memory_uri2 = "file:peer_handshake2?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let first_pid = first.get_peer_id().unwrap();
     let _first_syncer =
       SyncServer::listen_on_thread("localhost:1701", in_memory_uri.into()).unwrap();
+    let _second_syncer =
+      SyncServer::listen_on_thread("localhost:1801", in_memory_uri2.into()).unwrap();
 
     let second = RusqliteStorage::open(None).unwrap();
 
     let second_pid = second.get_peer_id().unwrap();
 
-    let expected_first_pid = second.add_peer("localhost:1701").unwrap();
+    let expected_first_pid = second
+      .add_peer("localhost:1701", Some("localhost:1801"))
+      .unwrap();
     assert_eq!(expected_first_pid, first_pid);
 
     let seconds_peers = second.get_peers().unwrap();
@@ -324,7 +346,7 @@ mod test {
       SyncServer::listen_on_thread("localhost:1702", in_memory_uri.into()).unwrap();
 
     let second = RusqliteStorage::open(None).unwrap();
-    let sync_peer_id = second.add_peer("localhost:1702").unwrap();
+    let sync_peer_id = second.add_peer("localhost:1702", None).unwrap();
     let peer = second.get_peer(&sync_peer_id).unwrap();
 
     let picard = first
@@ -358,7 +380,7 @@ mod test {
       SyncServer::listen_on_thread("localhost:1703", in_memory_uri.into()).unwrap();
 
     let second = RusqliteStorage::open(None).unwrap();
-    let sync_peer_id = second.add_peer("localhost:1703").unwrap();
+    let sync_peer_id = second.add_peer("localhost:1703", None).unwrap();
     let peer = second.get_peer(&sync_peer_id).unwrap();
 
     let picard = first
@@ -395,6 +417,44 @@ mod test {
     assert_eq!(riker, riker_synced.clone());
     assert_eq!(locally_added_bev, bev_after_sync.clone());
     assert_eq!(locally_added_wes, wes_after_sync.clone());
+  }
+
+  #[test]
+  #[traced_test]
+  fn local_title_update_sync() {
+    // use uri to share in memory database data https://sqlite.org/inmemorydb.html
+    let in_memory_uri = "file:local_title_update_sync?mode=memory&cache=shared";
+    let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
+    let _first_syncer =
+      SyncServer::listen_on_thread("localhost:1704", in_memory_uri.into()).unwrap();
+    let _second_syncer =
+      SyncServer::listen_on_thread("localhost:1804", in_memory_uri.into()).unwrap();
+
+    let second = RusqliteStorage::open(None).unwrap();
+    let sync_peer_id = second
+      .add_peer("localhost:1704", Some("localhost:1804"))
+      .unwrap();
+    let peer = second.get_peer(&sync_peer_id).unwrap();
+
+    let picard = first
+      .create_new_note("Picard", Some("Captain"), None)
+      .unwrap();
+    let riker = first
+      .create_new_note("Riker", Some("Number One"), Some(&picard.id))
+      .unwrap();
+    let picard = first.load_note(&picard.id).unwrap();
+
+    let sync_results = second.sync_with_peer(&peer).unwrap();
+    assert_eq!(sync_results.num_changes, 2);
+    assert_eq!(sync_results.updated_peer_clock, 2);
+
+    // first.update_title(&picard.id, "Positronic").unwrap();
+    second.update_title(&picard.id, "Locutus").unwrap();
+
+    let second_peer_info = first.get_peer(&second.get_peer_id().unwrap()).unwrap();
+    let backsync_results = first.sync_with_peer(&second_peer_info).unwrap();
+    assert_eq!(backsync_results.num_changes, 1);
+    assert_eq!(sync_results.updated_peer_clock, 3);
   }
 
   // TODO do sync with all updates done locally and remotely.

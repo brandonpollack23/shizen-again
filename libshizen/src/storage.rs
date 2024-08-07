@@ -17,7 +17,11 @@ pub trait TodoStorage {
     description: Option<&str>,
     parent: Option<&NoteId>,
   ) -> ShizenResult<Note>;
-  fn add_peer<A: ToSocketAddrs>(&self, addr: A) -> ShizenResult<PeerId>;
+  fn add_peer<A: ToSocketAddrs>(
+    &self,
+    addr: A,
+    local_server_addr: Option<A>,
+  ) -> ShizenResult<PeerId>;
   fn add_connected_peer<A: ToSocketAddrs>(
     &self,
     peer_id: PeerId,

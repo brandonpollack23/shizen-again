@@ -650,13 +650,17 @@ impl TodoStorage for RusqliteStorage {
     Ok(note)
   }
 
-  fn add_peer<A: ToSocketAddrs>(&self, addr: A) -> ShizenResult<PeerId> {
+  fn add_peer<A: ToSocketAddrs>(
+    &self,
+    addr: A,
+    local_server_addr: Option<A>,
+  ) -> ShizenResult<PeerId> {
     let this_peer_id = self.get_peer_id()?;
     let socket_addr = addr.to_socket_addrs().unwrap().next().unwrap();
     let addr_json = serde_json::to_string(&socket_addr)?;
 
     let mut sync = SyncConnection::new(&addr)?;
-    let peer_id = sync.peer_id_handshake(&this_peer_id)?;
+    let peer_id = sync.peer_id_handshake(&this_peer_id, local_server_addr)?;
 
     let conn = self.conn.borrow_mut();
 
@@ -1102,7 +1106,7 @@ impl TodoStorage for RusqliteStorage {
 
   fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<SyncResults> {
     let mut sync_conn = SyncConnection::new(&peer.addr)?;
-    sync_conn.sync_with_peer(&peer, self)
+    sync_conn.sync_with_peer(&peer, self, None::<SocketAddr>)
   }
 
   fn apply_action(&self, action: &Action) -> ShizenResult<()> {
