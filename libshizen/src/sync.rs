@@ -296,7 +296,10 @@ fn sync_protocol_rx(
 
 #[cfg(test)]
 mod test {
-  use std::net::ToSocketAddrs;
+  use std::{
+    net::{SocketAddr, SocketAddrV4, ToSocketAddrs},
+    str::FromStr,
+  };
 
   use tracing::info;
   use tracing_test::traced_test;
@@ -304,6 +307,10 @@ mod test {
   use crate::storage::{rusqlite::RusqliteStorage, TodoStorage};
 
   use super::SyncServer;
+
+  fn sockaddr(s: &str) -> SocketAddr {
+    SocketAddr::from_str(s).unwrap()
+  }
 
   #[test]
   #[traced_test]
@@ -314,16 +321,16 @@ mod test {
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let first_pid = first.get_peer_id().unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1701", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1701"), in_memory_uri.into()).unwrap();
     let _second_syncer =
-      SyncServer::listen_on_thread("localhost:1801", in_memory_uri2.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1801"), in_memory_uri2.into()).unwrap();
 
     let second = RusqliteStorage::open(None).unwrap();
 
     let second_pid = second.get_peer_id().unwrap();
 
     let expected_first_pid = second
-      .add_peer("localhost:1701", Some("localhost:1801"))
+      .add_peer(&sockaddr("0.0.0.0:1701"), Some(&sockaddr("0.0.0.0:1801")))
       .unwrap();
     assert_eq!(expected_first_pid, first_pid);
 
@@ -331,10 +338,7 @@ mod test {
     assert_eq!(seconds_peers.len(), 1);
     assert_eq!(seconds_peers[0].peer_id, first_pid);
     assert_eq!(seconds_peers[0].clock, 0);
-    assert_eq!(
-      seconds_peers[0].addr,
-      "localhost:1701".to_socket_addrs().unwrap().next().unwrap()
-    );
+    assert_eq!(seconds_peers[0].addr, sockaddr("0.0.0.0:1701"));
 
     let peers = &first.get_peers().unwrap();
     info!("peers {:#?}", peers);
@@ -351,10 +355,10 @@ mod test {
     let in_memory_uri = "file:peer_sync_one_way?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1702", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1702"), in_memory_uri.into()).unwrap();
 
     let second = RusqliteStorage::open(None).unwrap();
-    let sync_peer_id = second.add_peer("localhost:1702", None).unwrap();
+    let sync_peer_id = second.add_peer(&sockaddr("0.0.0.0:1702"), None).unwrap();
     let peer = second.get_peer(&sync_peer_id).unwrap();
 
     let picard = first
@@ -385,10 +389,10 @@ mod test {
     let in_memory_uri = "file:peer_sync_local_added_notes_one_way?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1703", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1703"), in_memory_uri.into()).unwrap();
 
     let second = RusqliteStorage::open(None).unwrap();
-    let sync_peer_id = second.add_peer("localhost:1703", None).unwrap();
+    let sync_peer_id = second.add_peer(&sockaddr("0.0.0.0:1703"), None).unwrap();
     let peer = second.get_peer(&sync_peer_id).unwrap();
 
     let picard = first
@@ -435,13 +439,13 @@ mod test {
     let in_memory_uri2 = "file:local_title_update_sync_second?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1705", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1705"), in_memory_uri.into()).unwrap();
     let second = RusqliteStorage::open(Some(&in_memory_uri2.into())).unwrap();
     let _second_syncer =
-      SyncServer::listen_on_thread("localhost:1805", in_memory_uri2.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1805"), in_memory_uri2.into()).unwrap();
 
     let sync_peer_id = second
-      .add_peer("localhost:1705", Some("localhost:1805"))
+      .add_peer(&sockaddr("0.0.0.0:1705"), Some(&sockaddr("0.0.0.0:1805")))
       .unwrap();
     let peer = second.get_peer(&sync_peer_id).unwrap();
 
@@ -478,13 +482,13 @@ mod test {
     let in_memory_uri2 = "file:local_desc_update_sync2?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1706", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1706"), in_memory_uri.into()).unwrap();
 
     let second = RusqliteStorage::open(Some(&in_memory_uri2.into())).unwrap();
     let _second_syncer =
-      SyncServer::listen_on_thread("localhost:1806", in_memory_uri2.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1806"), in_memory_uri2.into()).unwrap();
     let first_sync_peer_id = second
-      .add_peer("localhost:1706", Some("localhost:1806"))
+      .add_peer(&sockaddr("0.0.0.0:1706"), Some(&sockaddr("0.0.0.0:1806")))
       .unwrap();
     let first_peer = second.get_peer(&first_sync_peer_id).unwrap();
 
@@ -523,13 +527,13 @@ mod test {
     let in_memory_uri2 = "file:local_and_remote_keeps_local_second?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1707", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1707"), in_memory_uri.into()).unwrap();
     let second = RusqliteStorage::open(Some(&in_memory_uri2.into())).unwrap();
     let _second_syncer =
-      SyncServer::listen_on_thread("localhost:1807", in_memory_uri2.into()).unwrap();
+      SyncServer::listen_on_thread(&sockaddr("0.0.0.0:1807"), in_memory_uri2.into()).unwrap();
 
     let sync_peer_id = second
-      .add_peer("localhost:1707", Some("localhost:1807"))
+      .add_peer(&sockaddr("0.0.0.0:1707"), Some(&sockaddr("0.0.0.0:1807")))
       .unwrap();
     let peer = second.get_peer(&sync_peer_id).unwrap();
 

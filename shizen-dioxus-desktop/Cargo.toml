@@ -4,11 +4,12 @@ version = "0.1.0"
 authors = ["Brandon Pollack <brandonpollack23@gmail.com>"]
 edition = "2021"
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [dependencies]
-shizen-dioxus-core = { path = "../shizen-dioxus-core" }
 
 dioxus = { version = "0.5", features = ["desktop", "router"] }
-dioxus-logger = "0.5.0"
-tracing = "0.1.40"
+
+# Debug
+dioxus-logger = "0.5.1"
 libshizen = { version = "0.1.0", path = "../libshizen" }
-manganis = "0.2.2"

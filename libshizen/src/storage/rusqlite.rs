@@ -653,10 +653,10 @@ impl TodoStorage for RusqliteStorage {
     Ok(note)
   }
 
-  fn add_peer<A: ToSocketAddrs>(
+  fn add_peer(
     &self,
-    addr: A,
-    local_server_addr: Option<A>,
+    addr: &SocketAddr,
+    local_server_addr: Option<&SocketAddr>,
   ) -> ShizenResult<PeerId> {
     let this_peer_id = self.get_peer_id()?;
     let socket_addr = addr.to_socket_addrs().unwrap().next().unwrap();
@@ -674,11 +674,11 @@ impl TodoStorage for RusqliteStorage {
     Ok(peer_id)
   }
 
-  fn add_connected_peer<A: ToSocketAddrs>(
+  fn add_connected_peer(
     &self,
     peer_id: PeerId,
     other_clock: usize,
-    addr: &A,
+    addr: &SocketAddr,
   ) -> ShizenResult<()> {
     let conn = self.conn.borrow_mut();
 

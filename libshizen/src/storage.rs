@@ -1,5 +1,5 @@
 //! Generic storage for TODOs
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 
 use crate::{
   entities::{Action, Note, NoteId, PeerId, PeerInfo},
@@ -17,16 +17,16 @@ pub trait TodoStorage {
     description: Option<&str>,
     parent: Option<&NoteId>,
   ) -> ShizenResult<Note>;
-  fn add_peer<A: ToSocketAddrs>(
+  fn add_peer(
     &self,
-    addr: A,
-    local_server_addr: Option<A>,
+    addr: &SocketAddr,
+    local_server_addr: Option<&SocketAddr>,
   ) -> ShizenResult<PeerId>;
-  fn add_connected_peer<A: ToSocketAddrs>(
+  fn add_connected_peer(
     &self,
     peer_id: PeerId,
     clock: usize,
-    addr: &A,
+    addr: &SocketAddr,
   ) -> ShizenResult<()>;
 
   // Read
