@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use std::path::PathBuf;
+
 use dioxus::prelude::*;
 use dioxus_logger::tracing::{info, Level};
 use libshizen::{entities::Note, storage::TodoStorage};
@@ -22,6 +24,28 @@ fn main() {
 
 #[component]
 fn App() -> Element {
+  use_context_provider(|| {
+    // TODO have settings object that contains selected database path.
+    // let default_storage_path = format!("{}/shizen.db", env!("HOME"));
+    let default_storage_path: PathBuf = "testdb/test.db".into();
+
+    info!("Attempting to create database at path {default_storage_path:?}");
+
+    // TODO combine open with create with a flag for creation param.
+    std::fs::create_dir_all(&default_storage_path.parent().unwrap()).unwrap();
+    let rusqlitedb = libshizen::DefaultStorage::open_create(Some(&default_storage_path), false);
+    if let Err(e) = rusqlitedb {
+      info!("Error Creating database: {e:?}");
+      std::process::exit(1);
+    } else {
+      info!("New Database created");
+    }
+
+    let db: Box<dyn TodoStorage> = Box::new(rusqlitedb.unwrap());
+
+    return Signal::new(db);
+  });
+
   rsx! {
       Router::<Route> {}
   }
