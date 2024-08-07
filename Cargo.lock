@@ -3993,6 +3993,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "libshizen",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
  "uuid",

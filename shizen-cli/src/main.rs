@@ -3,6 +3,8 @@ use libshizen::entities::{Note, NoteId};
 use libshizen::storage::rusqlite::RusqliteStorage;
 use libshizen::storage::TodoStorage;
 use libshizen::ShizenError;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -42,6 +44,9 @@ enum Commands {
   },
   Undo,
   Redo,
+  #[command(visible_alias = "h")]
+  History,
+  RedoQueue,
 }
 
 #[derive(Args, Debug, PartialEq, Eq)]
@@ -66,7 +71,13 @@ struct UpdateArguments {
 }
 
 fn main() {
-  tracing_subscriber::fmt::init();
+  tracing_subscriber::fmt()
+    .with_env_filter(
+      EnvFilter::builder()
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy(),
+    )
+    .init();
 
   let cli = Cli::parse();
 
@@ -87,9 +98,10 @@ fn main() {
     std::process::exit(1)
   }
 
-  let mut database = database.unwrap();
+  let database = database.unwrap();
 
   match cli.command {
+    Commands::Create => unreachable!("This case is handled explicitly above"),
     Commands::List { show_blocked } => {
       if show_blocked {
         println!(
@@ -108,7 +120,6 @@ fn main() {
         );
       }
     }
-    Commands::Create => unreachable!("This case is handled explicitly above"),
     Commands::Add(args) => {
       let parent_id = args
         .parent_id
@@ -150,8 +161,36 @@ fn main() {
         .add_blocked_note(&from, &to)
         .expect("error adding dependency");
     }
-    Commands::Undo => database.undo().expect("Failed to undo"),
-    Commands::Redo => database.redo().expect("Failed to redo"),
+    Commands::Undo => {
+      database.undo().expect("Failed to undo");
+    }
+    Commands::Redo => {
+      database.redo().expect("Failed to redo");
+    }
+    Commands::History => {
+      let muts = database
+        .load_all_changes_since_clock(0)
+        .expect("Could not load mutations");
+
+      for m in muts {
+        println!(
+          "{}",
+          serde_json::to_string_pretty(&m).expect("Error formatting json")
+        );
+      }
+    }
+    Commands::RedoQueue => {
+      let muts = database
+        .load_redo_queue()
+        .expect("Could not load redo queue mutations");
+
+      for m in muts {
+        println!(
+          "{}",
+          serde_json::to_string_pretty(&m).expect("Error formatting json")
+        );
+      }
+    }
   }
 }
 

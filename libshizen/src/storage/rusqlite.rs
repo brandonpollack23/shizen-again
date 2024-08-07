@@ -35,7 +35,7 @@ impl RusqliteStorage {
     db_path: Option<&std::path::PathBuf>,
     create: bool,
   ) -> ShizenResult<RusqliteStorage> {
-    if !create {
+    if create {
       if let Some(p) = db_path {
         if db_path.unwrap().exists() {
           return Err(ShizenError::ErrorCreatingDb(format!(
@@ -727,6 +727,22 @@ impl TodoStorage for RusqliteStorage {
     let actions: ShizenResult<Vec<_>> = txn
       .prepare("SELECT action_json FROM Mutations WHERE clock >= ? ORDER BY clock ASC")?
       .query_and_then([clock], |r| -> ShizenResult<_> {
+        let action_json: String = r.get(0)?;
+        let action: Action = serde_json::from_str(&action_json)?;
+        Ok(action)
+      })?
+      .collect();
+
+    Ok(actions?)
+  }
+
+  fn load_redo_queue(&self) -> ShizenResult<Vec<Action>> {
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
+
+    let actions: ShizenResult<Vec<_>> = txn
+      .prepare("SELECT action_json FROM RedoMutations ORDER BY id DESC")?
+      .query_and_then([], |r| -> ShizenResult<_> {
         let action_json: String = r.get(0)?;
         let action: Action = serde_json::from_str(&action_json)?;
         Ok(action)
