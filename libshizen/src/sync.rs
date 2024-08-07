@@ -16,25 +16,34 @@ use crate::{
 };
 
 pub struct SyncConnection {
+  this_peer_id: PeerId,
+  this_addr: Option<SocketAddr>,
   stream: TcpStream,
 }
 
 impl SyncConnection {
-  pub fn new<A: ToSocketAddrs>(addr: &A) -> ShizenResult<SyncConnection> {
+  pub fn new<A: ToSocketAddrs>(
+    this_peer_id: &PeerId,
+    addr: A,
+    this_addr: Option<A>,
+  ) -> ShizenResult<SyncConnection> {
+    let this_peer_id = this_peer_id.clone();
+    let this_addr = this_addr.map(|a| a.to_socket_addrs().unwrap().next().unwrap());
     let stream = TcpStream::connect(addr)?;
-    Ok(SyncConnection { stream })
+    Ok(SyncConnection {
+      this_peer_id,
+      this_addr,
+      stream,
+    })
   }
 
-  pub fn peer_id_handshake<A: ToSocketAddrs>(
-    &mut self,
-    this_peer_id: &PeerId,
-    local_server_address: Option<A>,
-  ) -> ShizenResult<PeerId> {
+  pub fn peer_id_handshake(&mut self) -> ShizenResult<PeerId> {
     let response = sync_protocol_tx(
       &mut self.stream,
       &SyncRequest::PeerIdentificationHandshake {
-        local_peer_id: this_peer_id.clone(),
-        local_server_address: local_server_address
+        local_peer_id: self.this_peer_id.clone(),
+        local_server_address: self
+          .this_addr
           .map(|a| a.to_socket_addrs().unwrap().next().unwrap()),
       },
     )?;
@@ -48,33 +57,17 @@ impl SyncConnection {
     }
   }
 
-  pub fn sync_with_peer<A: ToSocketAddrs>(
+  pub fn sync_with_peer(
     &mut self,
-    peer: &PeerInfo,
     database: &RusqliteStorage,
-    local_server_address: Option<A>,
+    peer: &PeerInfo,
   ) -> ShizenResult<SyncResults> {
-    info!("Beginning sync with peer: {peer:#?}");
-
-    // 1. Check that peer is added to peers table, if not handshake it.
-    let peer = {
-      let stored_peer_info = database.get_peer(&peer.peer_id);
-      if let Err(_) = stored_peer_info {
-        warn!("Peer is not in the database, handshaking...");
-
-        let this_peer_id = database.get_peer_id()?;
-        let peer_id = self.peer_id_handshake(&this_peer_id, local_server_address)?;
-        database.get_peer(&peer_id)?
-      } else {
-        stored_peer_info.unwrap()
-      }
-    };
-
     // 2. Request all changes since last synced change
     let response = sync_protocol_tx(
       &mut self.stream,
       &SyncRequest::Sync {
         last_sync_clock: peer.clock,
+        local_peer_id: self.this_peer_id.clone(),
       },
     )?;
 
@@ -119,7 +112,7 @@ impl SyncConnection {
     }
 
     // 4. Update the synced version of this peer in the peers table
-    database.set_peer_clock(peer.peer_id, clock)?;
+    database.set_peer_clock(&peer.peer_id, clock)?;
 
     // 5. TODO in the recieving in notify of some way to request sync back.
 
@@ -137,6 +130,7 @@ pub enum SyncRequest {
     local_server_address: Option<SocketAddr>,
   },
   Sync {
+    local_peer_id: PeerId,
     last_sync_clock: usize,
   },
 }
@@ -276,9 +270,16 @@ fn sync_protocol_rx(
         stream,
       )?;
     }
-    SyncRequest::Sync { last_sync_clock } => {
+    SyncRequest::Sync {
+      last_sync_clock,
+      local_peer_id: other_peer_id,
+    } => {
       let changes = database.load_all_changes_since_clock(last_sync_clock)?;
       let clock = database.get_clock()?;
+
+      // The peer is at least synced up to our clock now.
+      database.set_peer_clock(&other_peer_id, clock)?;
+
       serialize_message_to_stream(&SyncResponse::SyncResponse { changes, clock }, stream)?;
     }
   }
@@ -357,7 +358,7 @@ mod test {
       .unwrap();
     let picard = first.load_note(&picard.id).unwrap();
 
-    let sync_results = second.sync_with_peer(&peer).unwrap();
+    let sync_results = second.sync_with_peer(&peer, None).unwrap();
     assert_eq!(sync_results.num_changes, 2);
     assert_eq!(sync_results.updated_peer_clock, 2);
 
@@ -396,7 +397,7 @@ mod test {
       .create_new_note("Wes", Some("Bearded"), None)
       .unwrap();
 
-    let sync_results = second.sync_with_peer(&peer).unwrap();
+    let sync_results = second.sync_with_peer(&peer, None).unwrap();
     assert_eq!(sync_results.num_changes, 2);
     assert_eq!(sync_results.updated_peer_clock, 2);
 
@@ -444,7 +445,9 @@ mod test {
       .unwrap();
     let picard = first.load_note(&picard.id).unwrap();
 
-    let sync_results = second.sync_with_peer(&peer).unwrap();
+    let sync_results = second
+      .sync_with_peer(&peer, Some("localhost:1804"))
+      .unwrap();
     assert_eq!(sync_results.num_changes, 2);
     assert_eq!(sync_results.updated_peer_clock, 2);
 
@@ -452,7 +455,9 @@ mod test {
     second.update_title(&picard.id, "Locutus").unwrap();
 
     let second_peer_info = first.get_peer(&second.get_peer_id().unwrap()).unwrap();
-    let backsync_results = first.sync_with_peer(&second_peer_info).unwrap();
+    let backsync_results = first
+      .sync_with_peer(&second_peer_info, Some("localhost:1804"))
+      .unwrap();
     assert_eq!(backsync_results.num_changes, 1);
     assert_eq!(sync_results.updated_peer_clock, 3);
   }

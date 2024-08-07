@@ -48,7 +48,7 @@ pub trait TodoStorage {
   fn update_parent(&self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()>;
   fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
   fn remove_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
-  fn set_peer_clock(&self, peer_id: PeerId, clock: usize) -> ShizenResult<()>;
+  fn set_peer_clock(&self, peer_id: &PeerId, clock: usize) -> ShizenResult<()>;
 
   fn apply_action(&self, action: &Action) -> ShizenResult<()>;
 
@@ -60,7 +60,11 @@ pub trait TodoStorage {
   fn delete_note(&self, note_id: &NoteId) -> crate::ShizenResult<()>;
 
   // Sync
-  fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<SyncResults>;
+  fn sync_with_peer<A: ToSocketAddrs>(
+    &self,
+    peer: &PeerInfo,
+    local_server_addr: Option<A>,
+  ) -> ShizenResult<SyncResults>;
 }
 
 // TODO write down the sync strat (list of peers with their claimed sync version, request with stuff more, apply and overwrite conflicts for now, rewrite my own changes back on top)

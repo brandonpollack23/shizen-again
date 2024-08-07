@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use rusqlite::Error::QueryReturnedNoRows;
 use rusqlite::{Connection, Row};
-use tracing::{info, trace};
+use tracing::{info, trace, warn};
 use uuid::Uuid;
 
 use crate::entities::{Action, Note, NoteId, PeerId, PeerInfo};
@@ -659,8 +659,8 @@ impl TodoStorage for RusqliteStorage {
     let socket_addr = addr.to_socket_addrs().unwrap().next().unwrap();
     let addr_json = serde_json::to_string(&socket_addr)?;
 
-    let mut sync = SyncConnection::new(&addr)?;
-    let peer_id = sync.peer_id_handshake(&this_peer_id, local_server_addr)?;
+    let mut sync = SyncConnection::new(&this_peer_id, &addr, local_server_addr.as_ref())?;
+    let peer_id = sync.peer_id_handshake()?;
 
     let conn = self.conn.borrow_mut();
 
@@ -880,7 +880,7 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn set_peer_clock(&self, peer_id: PeerId, clock: usize) -> ShizenResult<()> {
+  fn set_peer_clock(&self, peer_id: &PeerId, clock: usize) -> ShizenResult<()> {
     let conn = self.conn.borrow_mut();
 
     conn.execute(
@@ -1104,9 +1104,35 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
-  fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<SyncResults> {
-    let mut sync_conn = SyncConnection::new(&peer.addr)?;
-    sync_conn.sync_with_peer(&peer, self, None::<SocketAddr>)
+  fn sync_with_peer<A: ToSocketAddrs>(
+    &self,
+    peer: &PeerInfo,
+    local_server_addr: Option<A>,
+  ) -> ShizenResult<SyncResults> {
+    info!("Beginning sync with peer: {peer:#?}");
+
+    let this_peer_id = self.get_peer_id()?;
+    let peer_addr = self.get_peer(&peer.peer_id)?.addr;
+    let mut sync_conn = SyncConnection::new(
+      &this_peer_id,
+      peer_addr,
+      local_server_addr.map(|a| a.to_socket_addrs().unwrap().next().unwrap()),
+    )?;
+
+    // Check that peer is added to peers table, if not handshake it.
+    let peer = {
+      let stored_peer_info = self.get_peer(&peer.peer_id);
+      if let Err(_) = stored_peer_info {
+        warn!("Peer is not in the database, handshaking...");
+
+        let peer_id = sync_conn.peer_id_handshake()?;
+        self.get_peer(&peer_id)?
+      } else {
+        stored_peer_info.unwrap()
+      }
+    };
+
+    sync_conn.sync_with_peer(self, &peer)
   }
 
   fn apply_action(&self, action: &Action) -> ShizenResult<()> {
