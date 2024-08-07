@@ -435,13 +435,13 @@ mod test {
     let in_memory_uri2 = "file:local_title_update_sync_second?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1704", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread("localhost:1705", in_memory_uri.into()).unwrap();
     let second = RusqliteStorage::open(Some(&in_memory_uri2.into())).unwrap();
     let _second_syncer =
-      SyncServer::listen_on_thread("localhost:1804", in_memory_uri2.into()).unwrap();
+      SyncServer::listen_on_thread("localhost:1805", in_memory_uri2.into()).unwrap();
 
     let sync_peer_id = second
-      .add_peer("localhost:1704", Some("localhost:1804"))
+      .add_peer("localhost:1705", Some("localhost:1805"))
       .unwrap();
     let peer = second.get_peer(&sync_peer_id).unwrap();
 
@@ -478,13 +478,13 @@ mod test {
     let in_memory_uri2 = "file:local_desc_update_sync2?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1705", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread("localhost:1706", in_memory_uri.into()).unwrap();
 
     let second = RusqliteStorage::open(Some(&in_memory_uri2.into())).unwrap();
     let _second_syncer =
-      SyncServer::listen_on_thread("localhost:1805", in_memory_uri2.into()).unwrap();
+      SyncServer::listen_on_thread("localhost:1806", in_memory_uri2.into()).unwrap();
     let first_sync_peer_id = second
-      .add_peer("localhost:1705", Some("localhost:1805"))
+      .add_peer("localhost:1706", Some("localhost:1806"))
       .unwrap();
     let first_peer = second.get_peer(&first_sync_peer_id).unwrap();
 
@@ -523,13 +523,13 @@ mod test {
     let in_memory_uri2 = "file:local_and_remote_keeps_local_second?mode=memory&cache=shared";
     let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
     let _first_syncer =
-      SyncServer::listen_on_thread("localhost:1704", in_memory_uri.into()).unwrap();
+      SyncServer::listen_on_thread("localhost:1707", in_memory_uri.into()).unwrap();
     let second = RusqliteStorage::open(Some(&in_memory_uri2.into())).unwrap();
     let _second_syncer =
-      SyncServer::listen_on_thread("localhost:1804", in_memory_uri2.into()).unwrap();
+      SyncServer::listen_on_thread("localhost:1807", in_memory_uri2.into()).unwrap();
 
     let sync_peer_id = second
-      .add_peer("localhost:1704", Some("localhost:1804"))
+      .add_peer("localhost:1707", Some("localhost:1807"))
       .unwrap();
     let peer = second.get_peer(&sync_peer_id).unwrap();
 
