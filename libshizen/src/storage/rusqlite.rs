@@ -53,7 +53,7 @@ impl RusqliteStorage {
     }
 
     let conn = if let Some(p) = db_path {
-      if !p.exists()
+      if (p.parent().is_some() && !p.parent().unwrap().exists())
         && !p.to_str().unwrap().starts_with("file::memory:")
         && !p.to_str().unwrap().contains("mode=memory")
       {
@@ -920,6 +920,8 @@ impl TodoStorage for RusqliteStorage {
 
     let (id_to_remove, undo_action, new_clock, undo_action_json) = q?;
 
+    trace!("Executing undo action: {:#?}", undo_action);
+
     match undo_action {
       Action::CreateNote { id, parent, .. } => {
         txn.execute("DELETE FROM Notes WHERE uuid = ?", [id.0.to_string()])?;
@@ -1041,6 +1043,8 @@ impl TodoStorage for RusqliteStorage {
 
     let (id_to_remove, redo_action) = q?;
 
+    trace!("Executing redo action: {redo_action:#?}");
+
     match redo_action {
       Action::CreateNote {
         id,
@@ -1133,6 +1137,8 @@ impl TodoStorage for RusqliteStorage {
   fn apply_action(&self, action: &Action) -> ShizenResult<()> {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
+
+    trace!("Applying action {action:#?}");
 
     match action {
       Action::CreateNote {

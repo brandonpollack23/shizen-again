@@ -87,6 +87,7 @@ impl SyncConnection {
       changes.len(),
       clock
     );
+    trace!("Changes received: {changes:#?}");
 
     // 3. Rebase our changes on top of these and increment our version to match.
     // First undo all our local changes
@@ -95,7 +96,7 @@ impl SyncConnection {
       let clock = database.undo()?;
       changes_undone = changes_undone + 1;
 
-      if clock == 0 || clock > peer.clock {
+      if clock == 0 || clock <= peer.clock {
         break;
       }
     }
@@ -117,6 +118,7 @@ impl SyncConnection {
 
     // 5. TODO in the recieving in notify of some way to request sync back.
 
+    info!("Sync completed");
     Ok(SyncResults {
       updated_peer_clock: clock,
       num_changes: changes.len(),
@@ -494,7 +496,6 @@ mod test {
     assert_eq!(sync_results.num_changes, 2);
     assert_eq!(sync_results.updated_peer_clock, 2);
 
-    // first.update_desc(&picard.id, "Positronic").unwrap();
     second
       .update_description(&picard.id, Some("of borg"))
       .unwrap();
@@ -509,7 +510,59 @@ mod test {
     assert_eq!(sync_results.updated_peer_clock, 2);
   }
 
-  // TODO local and remote title update takes local change.
+  // TODO when merge conflicts can be detected this test should do so.
+  #[test]
+  #[traced_test]
+  fn local_and_remote_keeps_local() {
+    // use uri to share in memory database data https://sqlite.org/inmemorydb.html
+    let in_memory_uri = "file:local_and_remote_keeps_local?mode=memory&cache=shared";
+    let in_memory_uri2 = "file:local_and_remote_keeps_local_second?mode=memory&cache=shared";
+    let first = RusqliteStorage::open(Some(&in_memory_uri.into())).unwrap();
+    let _first_syncer =
+      SyncServer::listen_on_thread("localhost:1704", in_memory_uri.into()).unwrap();
+    let second = RusqliteStorage::open(Some(&in_memory_uri2.into())).unwrap();
+    let _second_syncer =
+      SyncServer::listen_on_thread("localhost:1804", in_memory_uri2.into()).unwrap();
+
+    let sync_peer_id = second
+      .add_peer("localhost:1704", Some("localhost:1804"))
+      .unwrap();
+    let peer = second.get_peer(&sync_peer_id).unwrap();
+
+    let picard = first
+      .create_new_note("Picard", Some("Captain"), None)
+      .unwrap();
+    let _riker = first
+      .create_new_note("Riker", Some("Number One"), Some(&picard.id))
+      .unwrap();
+    let picard = first.load_note(&picard.id).unwrap();
+
+    let sync_results = second.sync_with_peer(&peer).unwrap();
+    assert_eq!(sync_results.num_changes, 2);
+    assert_eq!(sync_results.updated_peer_clock, 2);
+
+    second.update_title(&picard.id, "Locutus").unwrap();
+    let second_clock = second.get_clock().unwrap();
+    assert_eq!(second_clock, 3);
+    let changes_that_would_sync = second.load_all_changes_since_clock(2).unwrap();
+    assert_eq!(changes_that_would_sync.len(), 1);
+
+    first.update_title(&picard.id, "Positronic").unwrap();
+
+    let second_peer_info = first.get_peer(&second.get_peer_id().unwrap()).unwrap();
+    let _ = first.sync_with_peer(&second_peer_info).unwrap();
+
+    let picard_readback = first.load_note(&picard.id).unwrap();
+    assert_eq!(picard_readback.title, "Positronic");
+
+    let mutations = first.load_all_changes_since_clock(0).unwrap();
+    info!("Mutations: {mutations:#?}");
+
+    // Undoing should get the old title from remote in the history.
+    first.undo().unwrap();
+    let picard_readback_after_undo = first.load_note(&picard.id).unwrap();
+    assert_eq!(picard_readback_after_undo.title, "Picard");
+  }
 
   // TODO do sync with all updates done locally and remotely.
 }
