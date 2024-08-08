@@ -15,7 +15,7 @@ enum Route {
 fn main() {
   // Init logger
   dioxus_logger::init(Level::INFO).expect("failed to init logger");
-  info!("starting app");
+  info!("starting shizen desktop app...");
 
   let cfg = dioxus::desktop::Config::new()
     .with_custom_head(r#"<link rel="stylesheet" href="tailwind.css">"#.to_string());
@@ -47,7 +47,8 @@ fn App() -> Element {
   });
 
   rsx! {
-      Router::<Route> {}
+    link { rel: "stylesheet", href: "./assets/main.css" }
+    Router::<Route> {}
   }
 }
 
@@ -69,6 +70,8 @@ fn NoteListView() -> Element {
   }
 }
 
+// TODO parent sorting.
+// TODO custom ordering.
 // TODO toggle to show things blocking this note.
 #[component]
 fn TodoListItem(note: Note) -> Element {
@@ -80,7 +83,6 @@ fn TodoListItem(note: Note) -> Element {
     .join(", ");
 
   rsx! {
-    // TODO parent sorting.
     div {
       div { class: "font-semibold", "{note.title}" }
       if note.description.is_some() {
@@ -88,7 +90,7 @@ fn TodoListItem(note: Note) -> Element {
       }
       if note.notes_this_blocks.len() > 0 {
         div { class: "italic",
-          span { "Blocking: [" } span { class: "text-ellipsis", "Blocks: {blocklist_str}" } span { "]" }
+        span { "Blocking: [" } span { class: "text-ellipsis", "Blocks: {blocklist_str}" } span { "]" }
         }
       }
       // TODO blocked by with toggle.
