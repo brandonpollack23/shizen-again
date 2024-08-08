@@ -49,9 +49,7 @@ fn App() -> Element {
   });
 
   rsx! {
-    div { class: "bg-slate-300 h-screen",
-      Router::<Route> {}
-    }
+    div { class: "bg-slate-300 h-screen", Router::<Route> {} }
   }
 }
 
@@ -71,7 +69,9 @@ fn NoteListView() -> Element {
       if unblocked_notes.len() > 0 {
         ul { class: "bg-slate-50",
           for note in unblocked_notes {
-            li { TodoListItem { note } }
+            li {
+              TodoListItem { note }
+            }
           }
         }
       }
@@ -94,13 +94,17 @@ fn TodoListItem(note: Note) -> Element {
     div { class: "flex flex-row mb-3 p-2 shadow cursor-grab",
       input { class: "self-center mr-3 w-4 h-4", r#type: "checkbox" }
       div {
-        div { p { class: "font-bold", "{note.title}" } }
+        div {
+          p { class: "font-bold", "{note.title}" }
+        }
         if note.description.is_some() {
           div { class: "italic", "{note.description.unwrap()}" }
         }
         if note.notes_this_blocks.len() > 0 {
           div { class: "italic",
-          span { "Blocking: [" } span { class: "text-ellipsis", "{blocklist_str}" } span { "]" }
+            span { "Blocking: [" }
+            span { class: "text-ellipsis", "{blocklist_str}" }
+            span { "]" }
           }
         }
       }
