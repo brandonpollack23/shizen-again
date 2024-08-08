@@ -5,7 +5,6 @@ use crate::{entities::NoteId, sync::SyncResponse};
 
 pub type ShizenResult<T> = std::result::Result<T, ShizenError>;
 
-// TODO thiserror
 #[derive(Error, Debug)]
 pub enum ShizenError {
   #[error("Error creating databse {}", .0)]

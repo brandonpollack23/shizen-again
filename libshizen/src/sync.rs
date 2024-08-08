@@ -1,6 +1,6 @@
 use std::{
   io::{Read, Write},
-  net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
+  net::{SocketAddr, SocketAddrV4, TcpListener, TcpStream, ToSocketAddrs},
   sync::mpsc::Sender,
   thread::{self, JoinHandle},
   time::Duration,
@@ -25,7 +25,6 @@ impl SyncConnection {
   pub fn new<A: ToSocketAddrs>(
     this_peer_id: &PeerId,
     addr: A,
-    // TODO NOW change to just a port and let the ip come from the request.
     this_addr: Option<A>,
   ) -> ShizenResult<SyncConnection> {
     let this_peer_id = this_peer_id.clone();
@@ -182,8 +181,9 @@ impl SyncServer {
             continue;
           }
           Err(e) => error!("Tcp accept error occurred: {e:#?}"),
-          Ok((socket, _addr)) => {
-            if let Err(e) = Self::handle_request(socket, &this_peer_id, &database) {
+          Ok((socket, connected_addr)) => {
+            if let Err(e) = Self::handle_request(socket, &connected_addr, &this_peer_id, &database)
+            {
               error!("Error handling connection: {e:#?}");
             }
           }
@@ -202,10 +202,11 @@ impl SyncServer {
 
   fn handle_request(
     mut stream: TcpStream,
+    connected_addr: &SocketAddr,
     this_peer_id: &PeerId,
     database: &RusqliteStorage,
   ) -> ShizenResult<()> {
-    sync_protocol_rx(&mut stream, this_peer_id, database)
+    sync_protocol_rx(&mut stream, connected_addr, this_peer_id, database)
   }
 }
 
@@ -251,6 +252,7 @@ fn serialize_message_to_stream<M: Serialize>(
 
 fn sync_protocol_rx(
   stream: &mut TcpStream,
+  connected_addr: &SocketAddr,
   this_peer_id: &PeerId,
   database: &RusqliteStorage,
 ) -> ShizenResult<()> {
@@ -269,7 +271,8 @@ fn sync_protocol_rx(
     } => {
       let other_clock = 0; // No syncing done yet, always start at 0.
       if let Some(a) = other_server_address {
-        database.add_connected_peer(other_peer_id, other_clock, &a)?;
+        let other_sync_server = SocketAddr::new(connected_addr.ip(), a.port());
+        database.add_connected_peer(other_peer_id, other_clock, &other_sync_server)?;
       }
 
       serialize_message_to_stream(

@@ -1195,8 +1195,6 @@ impl TodoStorage for RusqliteStorage {
         old_parent,
         new_parent,
       } => {
-        // TODO NOW this should take old parent since this might be from sync (same for ALL update_txn operations).
-        // Test this case
         Self::change_parent_txn(&txn, id, new_parent.as_ref(), old_parent.as_ref())?;
       }
       Action::AddDependency { blocker, blockee } => {

@@ -63,5 +63,3 @@ pub trait TodoStorage {
   // Sync
   fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<SyncResults>;
 }
-
-// TODO write down the sync strat (list of peers with their claimed sync version, request with stuff more, apply and overwrite conflicts for now, rewrite my own changes back on top)
