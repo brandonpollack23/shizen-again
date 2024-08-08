@@ -558,8 +558,8 @@ video {
   text-overflow: ellipsis;
 }
 
-.font-semibold {
-  font-weight: 600;
+.font-bold {
+  font-weight: 700;
 }
 
 .italic {

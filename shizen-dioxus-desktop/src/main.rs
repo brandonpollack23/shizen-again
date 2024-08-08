@@ -1,3 +1,4 @@
+//! Note: all assets (tailwind.css/main.css/etc.) must be prefixed with the workspace path.
 #![allow(non_snake_case)]
 
 use std::path::PathBuf;
@@ -17,8 +18,9 @@ fn main() {
   dioxus_logger::init(Level::INFO).expect("failed to init logger");
   info!("starting shizen desktop app...");
 
-  let cfg = dioxus::desktop::Config::new()
-    .with_custom_head(r#"<link rel="stylesheet" href="tailwind.css">"#.to_string());
+  let cfg = dioxus::desktop::Config::new().with_custom_head(
+    r#"<link rel="stylesheet" href="shizen-dioxus-desktop/tailwind.css">"#.to_string(),
+  );
   LaunchBuilder::desktop().with_cfg(cfg).launch(App);
 }
 
@@ -47,7 +49,6 @@ fn App() -> Element {
   });
 
   rsx! {
-    link { rel: "stylesheet", href: "./assets/main.css" }
     Router::<Route> {}
   }
 }
@@ -84,7 +85,7 @@ fn TodoListItem(note: Note) -> Element {
 
   rsx! {
     div {
-      div { class: "font-semibold", "{note.title}" }
+      div { p { class: "font-bold", "{note.title}" } }
       if note.description.is_some() {
         div { class: "italic", "{note.description.unwrap()}" }
       }
