@@ -93,7 +93,7 @@ impl RusqliteStorage {
 
   fn load_note_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<Note> {
     conn.query_row_and_then::<Note, ShizenError, _, _>(
-      "SELECT uuid, title, description, parent, blocks, blocked, children FROM FullyQualifiedNotes WHERE uuid = ?",
+      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE uuid = ?",
       [note_id.0.to_string()],
       Self::row_to_note
     )
@@ -314,6 +314,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       id: NoteId(uuid),
       title: row.get(1)?,
       description: row.get(2)?,
+      completed: row.get(7)?,
       parent_id: parent_uuid.map(NoteId),
       children_ids,
       notes_this_blocks,
@@ -391,8 +392,8 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     let uuid = id.cloned().unwrap_or_else(|| NoteId(Uuid::new_v4()));
     trace!("Creating note: {title} {description:?}");
     txn.execute(
-      "INSERT INTO Notes (uuid, title, description) VALUES (?, ?, ?)",
-      (uuid.to_string(), title, description),
+      "INSERT INTO Notes (uuid, title, description, completed) VALUES (?, ?, ?, ?)",
+      (uuid.to_string(), title, description, false),
     )?;
 
     if let Some(p) = parent_id {
@@ -420,6 +421,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       id: uuid,
       title: title.to_string(),
       description: description.map(|s| s.to_string()),
+      completed: false,
       parent_id: parent_id.cloned(),
       children_ids: Vec::new(),
       notes_this_blocks: Vec::new(),
@@ -431,6 +433,29 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     let clock: usize =
       txn.query_row("SELECT clock FROM LocalSettings LIMIT 1", (), |r| r.get(0))?;
     Ok(clock)
+  }
+
+  fn set_completed_txn(
+    txn: &Connection,
+    note_id: &NoteId,
+    completed: bool,
+    old_completed: bool,
+  ) -> ShizenResult<()> {
+    txn.execute(
+      r#"UPDATE Notes SET completed = ? WHERE uuid = ?"#,
+      (completed, &note_id.0.to_string()),
+    )?;
+
+    Self::insert_mutations(
+      txn,
+      &[Action::SetCompleted {
+        id: note_id.clone(),
+        new_completed: completed,
+        old_completed,
+      }],
+    )?;
+
+    Ok(())
   }
 
   fn update_title_txn(
@@ -695,7 +720,35 @@ impl TodoStorage for RusqliteStorage {
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>> {
     let conn = self.conn.borrow();
     let mut stmt = conn.prepare(
-      "SELECT uuid, title, description, parent, blocks, blocked, children FROM FullyQualifiedNotes",
+      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes",
+    )?;
+
+    let result: ShizenResult<Vec<_>> = stmt
+      .query_and_then((), Self::row_to_note)?
+      .map(|v: ShizenResult<_>| v.map_err(Into::into))
+      .collect();
+
+    result
+  }
+
+  fn load_all_incomplete_notes(&self) -> ShizenResult<Vec<Note>> {
+    let conn = self.conn.borrow();
+    let mut stmt = conn.prepare(
+      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE completed = 0",
+    )?;
+
+    let result: ShizenResult<Vec<_>> = stmt
+      .query_and_then((), Self::row_to_note)?
+      .map(|v: ShizenResult<_>| v.map_err(Into::into))
+      .collect();
+
+    result
+  }
+
+  fn load_all_complete_notes(&self) -> ShizenResult<Vec<Note>> {
+    let conn = self.conn.borrow();
+    let mut stmt = conn.prepare(
+      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE completed = 1",
     )?;
 
     let result: ShizenResult<Vec<_>> = stmt
@@ -709,7 +762,7 @@ impl TodoStorage for RusqliteStorage {
   fn load_all_unblocked_notes(&self) -> ShizenResult<Vec<Note>> {
     let conn = self.conn.borrow();
     let mut stmt = conn.prepare(
-      "SELECT uuid, title, description, parent, blocks, blocked, children FROM FullyQualifiedNotes WHERE blocked IS NULL"
+      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE blocked IS NULL"
     )?;
 
     let result: ShizenResult<Vec<_>> = stmt
@@ -840,6 +893,18 @@ impl TodoStorage for RusqliteStorage {
     Ok(peer_info)
   }
 
+  fn set_completed(&self, note_id: &NoteId, completed: bool) -> ShizenResult<()> {
+    let mut conn = self.conn.borrow_mut();
+    let txn = conn.transaction()?;
+
+    let old_completed = Self::load_note_conn(&txn, note_id)?.completed;
+    Self::set_completed_txn(&txn, note_id, completed, old_completed)?;
+
+    txn.commit()?;
+
+    Ok(())
+  }
+
   fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()> {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
@@ -944,6 +1009,16 @@ impl TodoStorage for RusqliteStorage {
         if parent.is_some() {
           txn.execute("DELETE FROM Children WHERE child = ?", [id.0.to_string()])?;
         }
+      }
+      Action::SetCompleted {
+        id,
+        new_completed,
+        old_completed,
+      } => {
+        txn.execute(
+          "UPDATE Notes SET completed = ? WHERE uuid = ?",
+          (old_completed, id.0.to_string()),
+        )?;
       }
       Action::UpdateTitle { id, old_title, .. } => {
         txn.execute(
@@ -1076,6 +1151,13 @@ impl TodoStorage for RusqliteStorage {
           parent.as_ref(),
         )?;
       }
+      Action::SetCompleted {
+        id,
+        new_completed,
+        old_completed,
+      } => {
+        Self::set_completed_txn(&txn, &id, new_completed, old_completed)?;
+      }
       Action::UpdateTitle {
         id,
         old_title,
@@ -1170,6 +1252,13 @@ impl TodoStorage for RusqliteStorage {
           description.as_ref().map(|d| d.as_str()),
           parent.as_ref(),
         )?;
+      }
+      Action::SetCompleted {
+        id,
+        new_completed,
+        old_completed,
+      } => {
+        Self::set_completed_txn(&txn, id, *new_completed, *old_completed)?;
       }
       Action::UpdateTitle {
         id,

@@ -31,6 +31,8 @@ pub trait TodoStorage {
 
   // Read
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>>;
+  fn load_all_incomplete_notes(&self) -> ShizenResult<Vec<Note>>;
+  fn load_all_complete_notes(&self) -> ShizenResult<Vec<Note>>;
   fn load_all_unblocked_notes(&self) -> ShizenResult<Vec<Note>>;
   fn load_all_changes_since_clock(&self, clock: usize) -> ShizenResult<Vec<Action>>;
   fn load_redo_queue(&self) -> ShizenResult<Vec<Action>>;
@@ -44,6 +46,7 @@ pub trait TodoStorage {
   fn get_peer(&self, peer_id: &PeerId) -> ShizenResult<PeerInfo>;
 
   // Update
+  fn set_completed(&self, note_id: &NoteId, completed: bool) -> ShizenResult<()>;
   fn update_title(&self, note_id: &NoteId, title: &str) -> ShizenResult<()>;
   fn update_description(&self, note_id: &NoteId, description: Option<&str>) -> ShizenResult<()>;
   fn update_parent(&self, note_id: &NoteId, parent: Option<&NoteId>) -> ShizenResult<()>;

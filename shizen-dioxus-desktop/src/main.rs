@@ -59,10 +59,12 @@ fn App() -> Element {
   }
 }
 
-// TODO parent sorting.
+// TODO indentation by parent
 // TODO custom ordering.
 // TODO toggle to show things blocking this note.
 // TODO blocked by with toggle in settings or sidebar.
+// TODO expandable graveyard of completed notes
+// TODO ghosting completed parents.
 #[component]
 fn NoteListView() -> Element {
   let db = use_database();
@@ -120,3 +122,5 @@ fn TodoListItem(db: TodoStorageSignal, note: Note) -> Element {
     }
   }
 }
+
+// TODO note view

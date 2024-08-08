@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS LocalSettings (
 CREATE TABLE IF NOT EXISTS Notes (
   uuid TEXT PRIMARY KEY,
   title TEXT NOT NULL,
-  description TEXT
+  description TEXT,
+  completed INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS Children (
@@ -52,7 +53,8 @@ SELECT
   parent.parent,
   GROUP_CONCAT(blocks.blockee, ',') AS blocks,
   GROUP_CONCAT(blocked.blocker, ',') AS blocked,
-  GROUP_CONCAT(children.child, ',') AS children
+  GROUP_CONCAT(children.child, ',') AS children,
+  n.completed
 FROM Notes AS n
 LEFT JOIN Children AS parent ON n.uuid = parent.child
 LEFT JOIN Children AS children ON n.uuid = children.parent

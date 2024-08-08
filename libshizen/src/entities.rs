@@ -8,6 +8,7 @@ pub struct Note {
   pub id: NoteId,
   pub title: String,
   pub description: Option<String>,
+  pub completed: bool,
   pub parent_id: Option<NoteId>,
   pub children_ids: Vec<NoteId>,
   pub notes_this_blocks: Vec<NoteId>,
@@ -64,6 +65,11 @@ pub enum Action {
     title: String,
     description: Option<String>,
     parent: Option<NoteId>,
+  },
+  SetCompleted {
+    id: NoteId,
+    new_completed: bool,
+    old_completed: bool,
   },
   UpdateTitle {
     id: NoteId,
