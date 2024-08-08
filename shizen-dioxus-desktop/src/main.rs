@@ -13,7 +13,7 @@ enum Route {
   NoteListView,
 }
 
-fn use_database() -> Arc<dyn TodoStorage> {
+fn use_database() -> Signal<Box<dyn TodoStorage>> {
   use_context()
 }
 
@@ -48,8 +48,8 @@ fn App() -> Element {
       info!("New Database created");
     }
 
-    let db: Arc<dyn TodoStorage> = Arc::new(rusqlitedb.unwrap());
-    return db;
+    let db: Box<dyn TodoStorage> = Box::new(rusqlitedb.unwrap());
+    return Signal::new(db);
   });
 
   rsx! {
@@ -67,6 +67,8 @@ fn NoteListView() -> Element {
 
   let db = use_database();
   // TODO async load all unblocked notes in a coroutine or something.
+
+  // TODO https://github.com/DioxusLabs/dioxus/blob/main/examples/todomvc.rs use this example, instead of hashmap use my database.
 
   rsx! {
     if let Ok(unblocked_notes) = db.read().load_all_unblocked_notes() {
