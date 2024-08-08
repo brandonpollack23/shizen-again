@@ -92,7 +92,7 @@ fn TodoListItem(note: Note) -> Element {
 
   rsx! {
     div { class: "flex flex-row mb-3 p-2 shadow cursor-grab",
-      input { class: "self-center mr-3 w-4 h-4", r#type: "checkbox" }
+      input { class: "self-center mr-3 w-6 h-6", r#type: "checkbox" }
       div {
         div {
           p { class: "font-bold", "{note.title}" }
