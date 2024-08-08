@@ -1,7 +1,7 @@
 //! Note: all assets (tailwind.css/main.css/etc.) must be prefixed with the workspace path.
 #![allow(non_snake_case)]
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use dioxus::prelude::*;
 use dioxus_logger::tracing::{info, Level};
@@ -11,6 +11,10 @@ use libshizen::{entities::Note, storage::TodoStorage};
 enum Route {
   #[route("/")]
   NoteListView,
+}
+
+fn use_database() -> Arc<dyn TodoStorage> {
+  use_context()
 }
 
 fn main() {
@@ -40,12 +44,12 @@ fn App() -> Element {
       info!("Error Creating database: {e:?}");
       std::process::exit(1);
     } else {
+      // TODO print error using the error pattern documented on site.
       info!("New Database created");
     }
 
-    let db: Box<dyn TodoStorage> = Box::new(rusqlitedb.unwrap());
-
-    return Signal::new(db);
+    let db: Arc<dyn TodoStorage> = Arc::new(rusqlitedb.unwrap());
+    return db;
   });
 
   rsx! {
@@ -61,7 +65,7 @@ fn App() -> Element {
 fn NoteListView() -> Element {
   // TODO show_blocked
 
-  let db = use_context::<Signal<Box<dyn TodoStorage>>>();
+  let db = use_database();
   // TODO async load all unblocked notes in a coroutine or something.
 
   rsx! {
