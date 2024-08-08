@@ -4,8 +4,11 @@
 use std::{path::PathBuf, sync::Arc};
 
 use dioxus::prelude::*;
-use dioxus_logger::tracing::{info, Level};
-use libshizen::{entities::Note, storage::TodoStorage};
+use dioxus_logger::tracing::{error, info, Level};
+use libshizen::{
+  entities::{Note, NoteId},
+  storage::{rusqlite::RusqliteStorage, TodoStorage},
+};
 
 #[derive(Clone, Routable, Debug, PartialEq)]
 enum Route {
@@ -93,7 +96,13 @@ fn NoteListView() -> Element {
 }
 
 #[component]
+<<<<<<< HEAD
 fn TodoListItem(db: TodoStorageSignal, note: Note) -> Element {
+=======
+fn TodoListItem(note: Note) -> Element {
+  let mut db = use_context::<Signal<Box<dyn TodoStorage>>>();
+
+>>>>>>> 00adc91 (TODO NOT WORKING YET toggle note)
   let blocklist_str = note
     .notes_this_blocks
     .iter()
@@ -103,7 +112,11 @@ fn TodoListItem(db: TodoStorageSignal, note: Note) -> Element {
 
   rsx! {
     div { class: "flex flex-row mb-3 p-2 shadow cursor-grab",
+<<<<<<< HEAD
       input { class: "self-center mr-3 w-6 h-6", r#type: "checkbox" }
+=======
+      input { class: "self-center mr-3 w-4 h-4", r#type: "checkbox", onclick: |_| toggle_note_complete(&mut db, note.clone()) }
+>>>>>>> 00adc91 (TODO NOT WORKING YET toggle note)
       div {
         div {
           p { class: "font-bold", "{note.title}" }
@@ -120,6 +133,17 @@ fn TodoListItem(db: TodoStorageSignal, note: Note) -> Element {
         }
       }
     }
+  }
+}
+
+fn toggle_note_complete(db: &mut Signal<Box<dyn TodoStorage>>, note: Note) {
+  if let Err(e) = db.write().set_completed(&note.id, !note.completed) {
+    error!(
+      "Error marking note {} as {}:\n\t{:#?}",
+      note.id.0.to_string(),
+      !note.completed,
+      e
+    );
   }
 }
 
