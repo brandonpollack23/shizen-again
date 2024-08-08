@@ -49,10 +49,16 @@ fn App() -> Element {
   });
 
   rsx! {
-    Router::<Route> {}
+    div { class: "bg-slate-300 h-screen",
+      Router::<Route> {}
+    }
   }
 }
 
+// TODO parent sorting.
+// TODO custom ordering.
+// TODO toggle to show things blocking this note.
+// TODO blocked by with toggle in settings or sidebar.
 #[component]
 fn NoteListView() -> Element {
   // TODO show_blocked
@@ -62,8 +68,12 @@ fn NoteListView() -> Element {
 
   rsx! {
     if let Ok(unblocked_notes) = db.read().load_all_unblocked_notes() {
-      for note in unblocked_notes {
-        TodoListItem { note }
+      if unblocked_notes.len() > 0 {
+        ul { class: "bg-slate-50",
+          for note in unblocked_notes {
+            li { TodoListItem { note } }
+          }
+        }
       }
     } else {
       div { class: "text-red", "Error Loading Notes!" }
@@ -71,9 +81,6 @@ fn NoteListView() -> Element {
   }
 }
 
-// TODO parent sorting.
-// TODO custom ordering.
-// TODO toggle to show things blocking this note.
 #[component]
 fn TodoListItem(note: Note) -> Element {
   let blocklist_str = note
@@ -84,17 +91,19 @@ fn TodoListItem(note: Note) -> Element {
     .join(", ");
 
   rsx! {
-    div {
-      div { p { class: "font-bold", "{note.title}" } }
-      if note.description.is_some() {
-        div { class: "italic", "{note.description.unwrap()}" }
-      }
-      if note.notes_this_blocks.len() > 0 {
-        div { class: "italic",
-        span { "Blocking: [" } span { class: "text-ellipsis", "Blocks: {blocklist_str}" } span { "]" }
+    div { class: "flex flex-row mb-3 p-2 shadow cursor-grab",
+      input { class: "self-center mr-3 w-4 h-4", r#type: "checkbox" }
+      div {
+        div { p { class: "font-bold", "{note.title}" } }
+        if note.description.is_some() {
+          div { class: "italic", "{note.description.unwrap()}" }
+        }
+        if note.notes_this_blocks.len() > 0 {
+          div { class: "italic",
+          span { "Blocking: [" } span { class: "text-ellipsis", "{blocklist_str}" } span { "]" }
+          }
         }
       }
-      // TODO blocked by with toggle.
     }
   }
 }
