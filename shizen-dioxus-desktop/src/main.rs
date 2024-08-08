@@ -13,7 +13,9 @@ enum Route {
   NoteListView,
 }
 
-fn use_database() -> Signal<Box<dyn TodoStorage>> {
+type TodoStorageSignal = Signal<Box<dyn TodoStorage>>;
+
+fn use_database() -> TodoStorageSignal {
   use_context()
 }
 
@@ -63,32 +65,33 @@ fn App() -> Element {
 // TODO blocked by with toggle in settings or sidebar.
 #[component]
 fn NoteListView() -> Element {
-  // TODO show_blocked
-
   let db = use_database();
+  // TODO show_blocked
+  // TODO Error handling instead of unwrap using ErrorBoundary: https://dioxuslabs.com/learn/0.5/cookbook/error_handling
+  let todos = use_memo(move || db.read().load_all_unblocked_notes().unwrap());
   // TODO async load all unblocked notes in a coroutine or something.
 
   // TODO https://github.com/DioxusLabs/dioxus/blob/main/examples/todomvc.rs use this example, instead of hashmap use my database.
 
   rsx! {
-    if let Ok(unblocked_notes) = db.read().load_all_unblocked_notes() {
-      if unblocked_notes.len() > 0 {
+    // if let Ok(unblocked_notes) = db.read().load_all_unblocked_notes() {
+      if todos().len() > 0 {
         ul { class: "bg-slate-50",
-          for note in unblocked_notes {
+          for note in &todos() {
             li {
-              TodoListItem { note }
+              TodoListItem { db, note: note.clone() }
             }
           }
         }
       }
-    } else {
-      div { class: "text-red", "Error Loading Notes!" }
-    }
+    // } else {
+    //   div { class: "text-red", "Error Loading Notes!" }
+    // }
   }
 }
 
 #[component]
-fn TodoListItem(note: Note) -> Element {
+fn TodoListItem(db: TodoStorageSignal, note: Note) -> Element {
   let blocklist_str = note
     .notes_this_blocks
     .iter()
