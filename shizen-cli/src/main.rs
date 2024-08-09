@@ -92,7 +92,7 @@ enum PeerCommand {
     local_server_port: Option<u16>,
   },
   #[command(visible_alias = "rm")]
-  Remove,
+  Remove { peer_id: Uuid },
 }
 
 fn main() {
@@ -261,9 +261,9 @@ fn handle_peer_command(command: PeerCommand, db: &RusqliteStorage) {
       db.add_peer(&remote_address, local_server_addr.as_ref())
         .expect("Error adding peer");
     }
-    PeerCommand::Remove => {
-      todo!()
-    }
+    PeerCommand::Remove { peer_id } => db
+      .remove_peer(&PeerId(peer_id))
+      .expect("Could not remove peer"),
   }
 }
 

@@ -1216,6 +1216,15 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
+  fn remove_peer(&self, peer_id: &PeerId) -> ShizenResult<()> {
+    let conn = self.conn.borrow_mut();
+    conn.execute(
+      "DELETE FROM Peers WHERE peer_id = ?",
+      [peer_id.0.to_string()],
+    )?;
+    Ok(())
+  }
+
   fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<SyncResults> {
     info!("Beginning sync with peer: {peer:#?}");
 

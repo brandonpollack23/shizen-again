@@ -61,7 +61,8 @@ pub trait TodoStorage {
   fn redo(&self) -> ShizenResult<usize>;
 
   // Delete
-  fn delete_note(&self, note_id: &NoteId) -> crate::ShizenResult<()>;
+  fn delete_note(&self, note_id: &NoteId) -> ShizenResult<()>;
+  fn remove_peer(&self, peer_id: &PeerId) -> ShizenResult<()>;
 
   // Sync
   fn sync_with_peer(&self, peer: &PeerInfo) -> ShizenResult<SyncResults>;
