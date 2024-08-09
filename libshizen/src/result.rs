@@ -1,7 +1,10 @@
 //! Result and error types for libshizen
 use thiserror::Error;
 
-use crate::{entities::NoteId, sync::SyncResponse};
+use crate::{
+  entities::{NoteId, PeerId},
+  sync::SyncResponse,
+};
 
 pub type ShizenResult<T> = std::result::Result<T, ShizenError>;
 
@@ -38,4 +41,8 @@ pub enum ShizenError {
   PeerTcpConnectionFailed(#[from] std::io::Error),
   #[error("Expected response {}, but got response {:#?}", .0, .1)]
   UnexpectedSyncProtocolResponse(String, SyncResponse),
+  #[error("Cannot be a peer of self")]
+  CannotBePeerOfSelf,
+  #[error("Peer already exists: {}", .0.0.to_string())]
+  PeerAlreadyExists(PeerId),
 }

@@ -690,6 +690,14 @@ impl TodoStorage for RusqliteStorage {
     let mut sync = SyncConnection::new(&this_peer_id, &addr, local_server_addr.as_ref())?;
     let peer_id = sync.peer_id_handshake()?;
 
+    if peer_id == this_peer_id {
+      return Err(ShizenError::CannotBePeerOfSelf);
+    }
+
+    if let Ok(_) = self.get_peer(&peer_id) {
+      return Err(ShizenError::PeerAlreadyExists(peer_id.clone()));
+    }
+
     let conn = self.conn.borrow_mut();
 
     conn.execute(
@@ -760,6 +768,7 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn load_all_unblocked_notes(&self, load_completed: bool) -> ShizenResult<Vec<Note>> {
+    // TODO NOW blockers complete.
     let conn = self.conn.borrow();
     let sql = if load_completed {
       "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE blocked IS NULL AND completed = 1"
@@ -925,12 +934,7 @@ impl TodoStorage for RusqliteStorage {
     let txn = conn.transaction()?;
 
     let old_description = Self::load_note_conn(&txn, note_id)?.description;
-    Self::update_description_txn(
-      &txn,
-      note_id,
-      description,
-      old_description.as_deref(),
-    )?;
+    Self::update_description_txn(&txn, note_id, description, old_description.as_deref())?;
     txn.commit()?;
 
     Ok(())
@@ -1744,6 +1748,8 @@ mod test {
     assert_eq!(clock, 2);
   }
 
+  // TODO cannot add self as peer test.
+  // TODO cannot add peer twice test.
   // TODO tests for redo
   // TODO tests for update undo.
 }

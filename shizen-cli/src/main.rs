@@ -1,5 +1,7 @@
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
 use clap::{Args, Parser, Subcommand};
-use libshizen::entities::{Note, NoteId};
+use libshizen::entities::{Note, NoteId, PeerId, PeerInfo};
 use libshizen::storage::rusqlite::RusqliteStorage;
 use libshizen::storage::TodoStorage;
 use libshizen::ShizenError;
@@ -32,14 +34,29 @@ enum Commands {
     show_blocked: bool,
   },
   #[command(visible_alias = "a")]
-  Add(AddArguments),
+  Add {
+    title: String,
+    #[arg(short, long)]
+    description: Option<String>,
+    #[arg(short, long)]
+    parent_id: Option<String>,
+  },
   #[command(visible_alias = "rm")]
   Remove {
     /// Parsable UUID of parent note.
     uuid: String,
   },
   #[command(visible_alias = "up")]
-  Update(UpdateArguments),
+  Update {
+    #[arg(short, long)]
+    note_id: String,
+    #[arg(short, long)]
+    title: Option<String>,
+    #[arg(short, long)]
+    description: Option<String>,
+    #[arg(short, long, default_value_t = false)]
+    remove_description: bool,
+  },
   #[command(visible_alias = "dep")]
   AddDependency {
     from: String,
@@ -54,27 +71,28 @@ enum Commands {
     #[arg(short, long, default_value_t = 1701u16)]
     port: u16,
   },
+  Peer {
+    #[command(subcommand)]
+    command: PeerCommand,
+  },
+  /// Sync with all peers or a specified one.
+  Sync {
+    #[arg(short, long)]
+    peer: Option<Uuid>,
+  },
 }
 
-#[derive(Args, Debug, PartialEq, Eq)]
-struct AddArguments {
-  title: String,
-  #[arg(short, long)]
-  description: Option<String>,
-  #[arg(short, long)]
-  parent_id: Option<String>,
-}
-
-#[derive(Args, Debug, PartialEq, Eq)]
-struct UpdateArguments {
-  #[arg(short, long)]
-  note_id: String,
-  #[arg(short, long)]
-  title: Option<String>,
-  #[arg(short, long)]
-  description: Option<String>,
-  #[arg(short, long, default_value_t = false)]
-  remove_description: bool,
+#[derive(Subcommand, PartialEq, Eq)]
+enum PeerCommand {
+  #[command(visible_alias = "ls")]
+  List,
+  #[command(visible_alias = "a")]
+  Add {
+    remote_address: SocketAddr,
+    local_server_port: Option<u16>,
+  },
+  #[command(visible_alias = "rm")]
+  Remove,
 }
 
 fn main() {
@@ -105,7 +123,7 @@ fn main() {
     std::process::exit(1)
   }
 
-  let database = database.unwrap();
+  let db = database.unwrap();
 
   match cli.command {
     Commands::Create => unreachable!("This case is handled explicitly above"),
@@ -113,69 +131,71 @@ fn main() {
       if show_blocked {
         println!(
           "{}",
-          format_note_list(&database.load_all_notes().expect("error loading all notes"))
+          format_note_list(&db.load_all_notes().expect("error loading all notes"))
         );
       } else {
         println!("Warning, hiding blocked items, show them with \"-s\"\n");
         println!(
           "{}",
           format_note_list(
-            &database
+            &db
               .load_all_unblocked_notes(false)
               .expect("error loading all notes")
           )
         );
       }
     }
-    Commands::Add(args) => {
-      let parent_id = args
-        .parent_id
+    Commands::Add {
+      title,
+      description,
+      parent_id,
+    } => {
+      let parent_id = parent_id
         .map(|p| Uuid::parse_str(&p).expect("invalid parent uuid"))
         .map(NoteId);
-      let added_note = database
-        .create_new_note(&args.title, args.description.as_deref(), parent_id.as_ref())
+      let added_note = db
+        .create_new_note(&title, description.as_deref(), parent_id.as_ref())
         .expect("could not add note");
       println!("Note added:\n\n{:#?}", added_note);
     }
     Commands::Remove { uuid } => {
       let uuid = Uuid::parse_str(&uuid).expect("Could not parse UUID");
-      database
-        .delete_note(&NoteId(uuid))
+      db.delete_note(&NoteId(uuid))
         .expect("Could not delete note");
     }
-    Commands::Update(args) => {
-      let note_id = NoteId(Uuid::parse_str(&args.note_id).expect("could not parse note id"));
-      if let Some(t) = args.title {
-        database
-          .update_title(&note_id, &t)
-          .expect("error updating title");
+    Commands::Update {
+      note_id,
+      title,
+      description,
+      remove_description,
+    } => {
+      let note_id = NoteId(Uuid::parse_str(&note_id).expect("could not parse note id"));
+      if let Some(t) = title {
+        db.update_title(&note_id, &t).expect("error updating title");
       }
 
-      if args.remove_description {
-        database
-          .update_description(&note_id, None)
+      if remove_description {
+        db.update_description(&note_id, None)
           .expect("Error removing description");
-      } else if let Some(d) = args.description {
-        database
-          .update_description(&note_id, Some(&d))
+      } else if let Some(d) = description {
+        db.update_description(&note_id, Some(&d))
           .expect("error updating description");
       }
     }
     Commands::AddDependency { from, to } => {
       let from = NoteId(Uuid::parse_str(&from).expect("could not parse note id"));
       let to = NoteId(Uuid::parse_str(&to).expect("could not parse note id"));
-      database
-        .add_blocked_note(&from, &to)
+      db.add_blocked_note(&from, &to)
         .expect("error adding dependency");
     }
     Commands::Undo => {
-      database.undo().expect("Failed to undo");
+      db.undo().expect("Failed to undo");
     }
     Commands::Redo => {
-      database.redo().expect("Failed to redo");
+      db.redo().expect("Failed to redo");
     }
     Commands::History => {
-      let muts = database
+      let muts = db
         .load_all_changes_since_clock(0)
         .expect("Could not load mutations");
 
@@ -187,7 +207,7 @@ fn main() {
       }
     }
     Commands::RedoQueue => {
-      let muts = database
+      let muts = db
         .load_redo_queue()
         .expect("Could not load redo queue mutations");
 
@@ -199,12 +219,60 @@ fn main() {
       }
     }
     Commands::Serve { port } => {
+      let database_id = db.get_peer_id().unwrap().0.to_string();
+      println!("Shizen server with database id {database_id} listening on port {port}");
       let mut server =
         libshizen::SyncServer::listen_on_thread(("localhost", port), cli.database_path.into())
           .expect("Could not create server");
       server.join();
     }
+    Commands::Peer { command } => {
+      handle_peer_command(command, &db);
+    }
+    Commands::Sync { peer } => {
+      if let Some(p) = peer {
+        let peer_info = db.get_peer(&PeerId(p)).expect("No such peer");
+        db.sync_with_peer(&peer_info)
+          .expect("Error syncing with peer");
+      } else {
+        let peers = db.get_peers().expect("Could not get peers");
+        for p in &peers {
+          db.sync_with_peer(p).expect("Error syncing with peer");
+        }
+      }
+    }
   }
+}
+
+fn handle_peer_command(command: PeerCommand, db: &RusqliteStorage) {
+  match command {
+    PeerCommand::List => {
+      let peers = db.get_peers().expect("Could not load peers");
+      for peer in &peers {
+        println!("{}", format_peer(peer));
+      }
+    }
+    PeerCommand::Add {
+      remote_address,
+      local_server_port,
+    } => {
+      let local_server_addr =
+        local_server_port.map(|p| SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), p));
+      db.add_peer(&remote_address, local_server_addr.as_ref())
+        .expect("Error adding peer");
+    }
+    PeerCommand::Remove => {
+      todo!()
+    }
+  }
+}
+
+fn format_peer(peer: &PeerInfo) -> String {
+  format!(
+    "Peer Id: {} Address: {}",
+    peer.peer_id.0.to_string(),
+    peer.addr
+  )
 }
 
 fn format_note(note: &Note) -> String {
