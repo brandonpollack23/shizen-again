@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use libshizen::entities::{Note, NoteId, PeerId, PeerInfo};
 use libshizen::storage::rusqlite::RusqliteStorage;
 use libshizen::storage::TodoStorage;
@@ -28,6 +28,11 @@ enum Commands {
   /// List notes/todos.
   #[command(visible_alias = "cr")]
   Create,
+  Complete {
+    note_id: Uuid,
+    #[arg(default_value_t = true)]
+    completed: bool,
+  },
   #[command(visible_alias = "ls")]
   List {
     #[arg(short, long, default_value_t = false)]
@@ -127,6 +132,9 @@ fn main() {
 
   match cli.command {
     Commands::Create => unreachable!("This case is handled explicitly above"),
+    Commands::Complete { note_id, completed } => db
+      .set_completed(&NoteId(note_id), completed)
+      .expect("error setting note completion"),
     Commands::List { show_blocked } => {
       if show_blocked {
         println!(
@@ -270,14 +278,15 @@ fn handle_peer_command(command: PeerCommand, db: &RusqliteStorage) {
 fn format_peer(peer: &PeerInfo) -> String {
   format!(
     "Peer Id: {} Address: {}",
-    peer.peer_id.0.to_string(),
+    peer.peer_id.0,
     peer.addr
   )
 }
 
 fn format_note(note: &Note) -> String {
   format!(
-    "{} -- ({})\n  {}\n  Parent: {}\n  Blocking: {}\n  Blocked By: {}",
+    "{}{} -- ({})\n  {}\n  Parent: {}\n  Blocking: {}\n  Blocked By: {}",
+    if note.completed { ":DONE: " } else { "" },
     note.title,
     note.id,
     note.description.clone().unwrap_or("---".to_string()),

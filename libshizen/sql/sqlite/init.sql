@@ -54,13 +54,15 @@ SELECT
   GROUP_CONCAT(blocks.blockee, ',') AS blocks,
   GROUP_CONCAT(blocked.blocker, ',') AS blocked,
   GROUP_CONCAT(children.child, ',') AS children,
-  n.completed
+  n.completed,
+  IFNULL(MAX(NOT blocker_done.completed), 0) AS is_blocked -- MAX on ints is actually BOOLEAN AND
 FROM Notes AS n
 LEFT JOIN Children AS parent ON n.uuid = parent.child
 LEFT JOIN Children AS children ON n.uuid = children.parent
 LEFT JOIN Dependencies AS blocks ON n.uuid = blocks.blocker
 LEFT JOIN Dependencies AS blocked ON n.uuid = blocked.blockee
-GROUP BY n.uuid, n.title, n.description, children.parent;
+LEFT JOIN Notes AS blocker_done ON blocked.blocker = blocker_done.uuid
+GROUP BY n.uuid, n.title, n.description, children.parent, n.completed;
 
 CREATE TABLE IF NOT EXISTS Mutations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

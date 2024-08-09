@@ -58,8 +58,8 @@ impl RusqliteStorage {
         && !p.to_str().unwrap().contains("mode=memory")
       {
         return Err(ShizenError::ErrorOpeningDb(format!(
-          "No such file: {}",
-          p.to_string_lossy()
+          "No such path to file: {}",
+          p.parent().unwrap().to_string_lossy()
         )));
       }
 
@@ -91,7 +91,7 @@ impl RusqliteStorage {
     })
   }
 
-  fn load_note_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<Note> {
+  fn load_note_txn(conn: &Connection, note_id: &NoteId) -> ShizenResult<Note> {
     conn.query_row_and_then::<Note, ShizenError, _, _>(
       "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE uuid = ?",
       [note_id.0.to_string()],
@@ -99,7 +99,7 @@ impl RusqliteStorage {
     )
   }
 
-  fn note_exists_conn(conn: &Connection, note_id: &NoteId) -> ShizenResult<bool> {
+  fn note_exists_txn(conn: &Connection, note_id: &NoteId) -> ShizenResult<bool> {
     Ok(conn.query_row(
       "SELECT count(uuid) FROM Notes where uuid = ?",
       [note_id.0.to_string()],
@@ -384,7 +384,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     parent_id: Option<&NoteId>,
   ) -> ShizenResult<Note> {
     if let Some(pid) = parent_id {
-      if !Self::note_exists_conn(txn, pid)? {
+      if !Self::note_exists_txn(txn, pid)? {
         return Err(ShizenError::NoSuchNote(pid.clone()));
       }
     }
@@ -517,7 +517,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     parent: Option<&NoteId>,
     old_parent: Option<&NoteId>,
   ) -> ShizenResult<()> {
-    if !Self::note_exists_conn(txn, note_id)? {
+    if !Self::note_exists_txn(txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
     }
 
@@ -540,7 +540,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
         [note_id.0.to_string()],
       )?;
     } else {
-      if !Self::note_exists_conn(txn, parent.unwrap())? {
+      if !Self::note_exists_txn(txn, parent.unwrap())? {
         return Err(ShizenError::NoSuchNote(parent.unwrap().clone()));
       }
 
@@ -565,11 +565,11 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
   }
 
   fn add_dep_txn(txn: &Connection, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
-    if !Self::note_exists_conn(txn, note_id)? {
+    if !Self::note_exists_txn(txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
     }
 
-    if !Self::note_exists_conn(txn, blocked_note)? {
+    if !Self::note_exists_txn(txn, blocked_note)? {
       return Err(ShizenError::NoSuchNote(blocked_note.clone()));
     }
 
@@ -600,11 +600,11 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
   }
 
   fn remove_dep_txn(txn: &Connection, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()> {
-    if !Self::note_exists_conn(txn, note_id)? {
+    if !Self::note_exists_txn(txn, note_id)? {
       return Err(ShizenError::NoSuchNote(note_id.clone()));
     }
 
-    if !Self::note_exists_conn(txn, blocked_note)? {
+    if !Self::note_exists_txn(txn, blocked_note)? {
       return Err(ShizenError::NoSuchNote(blocked_note.clone()));
     }
 
@@ -637,7 +637,7 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
   }
 
   fn delete_note_txn(txn: &Connection, note_id: &NoteId) -> ShizenResult<()> {
-    let old_note = Self::load_note_conn(txn, note_id)?;
+    let old_note = Self::load_note_txn(txn, note_id)?;
 
     // TODO can i do this more efficently and not recalculate the CTE?
     txn
@@ -694,7 +694,7 @@ impl TodoStorage for RusqliteStorage {
       return Err(ShizenError::CannotBePeerOfSelf);
     }
 
-    if let Ok(_) = self.get_peer(&peer_id) {
+    if self.get_peer(&peer_id).is_ok() {
       return Err(ShizenError::PeerAlreadyExists(peer_id.clone()));
     }
 
@@ -768,12 +768,11 @@ impl TodoStorage for RusqliteStorage {
   }
 
   fn load_all_unblocked_notes(&self, load_completed: bool) -> ShizenResult<Vec<Note>> {
-    // TODO NOW blockers complete.
     let conn = self.conn.borrow();
     let sql = if load_completed {
-      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE blocked IS NULL AND completed = 1"
+      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE is_blocked = 0 OR blocked = NULL"
     } else {
-      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE blocked IS NULL AND completed = 0"
+      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE completed = 0 AND is_blocked = 0"
     };
     let mut stmt = conn.prepare(sql)?;
 
@@ -819,12 +818,12 @@ impl TodoStorage for RusqliteStorage {
 
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note> {
     let conn = self.conn.borrow();
-    Self::load_note_conn(&conn, note_id)
+    Self::load_note_txn(&conn, note_id)
   }
 
   fn note_exists(&self, note_id: &NoteId) -> ShizenResult<bool> {
     let conn = self.conn.borrow();
-    Self::note_exists_conn(&conn, note_id)
+    Self::note_exists_txn(&conn, note_id)
   }
 
   fn get_all_descendents(&self, note_id: &NoteId) -> ShizenResult<Vec<Note>> {
@@ -862,7 +861,6 @@ impl TodoStorage for RusqliteStorage {
     let mut stmt = conn.prepare("SELECT peer_id, clock, addr FROM Peers")?;
     let peer_infos: ShizenResult<Vec<PeerInfo>> = stmt
       .query_and_then([], |r| -> ShizenResult<_> {
-        // TODO error handle
         let peer_id_str: String = r.get(0)?;
         let peer_id = PeerId(Uuid::parse_str(&peer_id_str)?);
         let clock: usize = r.get(1)?;
@@ -883,16 +881,15 @@ impl TodoStorage for RusqliteStorage {
   fn get_peer(&self, peer_id: &PeerId) -> ShizenResult<PeerInfo> {
     let conn = self.conn.borrow();
 
-    let peer_info = conn.query_row(
+    let peer_info = conn.query_row_and_then(
       "SELECT peer_id, clock, addr FROM Peers WHERE peer_id = ?",
       [peer_id.0.to_string()],
-      |r| {
-        // TODO error handle
-        let peer_id_str: String = r.get(0).unwrap();
-        let peer_id = PeerId(Uuid::parse_str(&peer_id_str).unwrap());
-        let clock: usize = r.get(1).unwrap();
-        let addr_json: String = r.get(2).unwrap();
-        let addr: SocketAddr = serde_json::from_str(&addr_json).unwrap();
+      |r| -> ShizenResult<_> {
+        let peer_id_str: String = r.get(0)?;
+        let peer_id = PeerId(Uuid::parse_str(&peer_id_str)?);
+        let clock: usize = r.get(1)?;
+        let addr_json: String = r.get(2)?;
+        let addr: SocketAddr = serde_json::from_str(&addr_json)?;
 
         Ok(PeerInfo {
           peer_id,
@@ -909,7 +906,7 @@ impl TodoStorage for RusqliteStorage {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    let old_completed = Self::load_note_conn(&txn, note_id)?.completed;
+    let old_completed = Self::load_note_txn(&txn, note_id)?.completed;
     Self::set_completed_txn(&txn, note_id, completed, old_completed)?;
 
     txn.commit()?;
@@ -921,7 +918,7 @@ impl TodoStorage for RusqliteStorage {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    let old_title = Self::load_note_conn(&txn, note_id)?.title;
+    let old_title = Self::load_note_txn(&txn, note_id)?.title;
     Self::update_title_txn(&txn, note_id, title, &old_title)?;
 
     txn.commit()?;
@@ -933,7 +930,7 @@ impl TodoStorage for RusqliteStorage {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    let old_description = Self::load_note_conn(&txn, note_id)?.description;
+    let old_description = Self::load_note_txn(&txn, note_id)?.description;
     Self::update_description_txn(&txn, note_id, description, old_description.as_deref())?;
     txn.commit()?;
 
@@ -944,7 +941,7 @@ impl TodoStorage for RusqliteStorage {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;
 
-    let old_parent = Self::load_note_conn(&txn, note_id)?.parent_id;
+    let old_parent = Self::load_note_txn(&txn, note_id)?.parent_id;
     Self::change_parent_txn(&txn, note_id, parent, old_parent.as_ref())?;
 
     txn.commit()?;
@@ -1018,9 +1015,7 @@ impl TodoStorage for RusqliteStorage {
         }
       }
       Action::SetCompleted {
-        id,
-        new_completed,
-        old_completed,
+        id, old_completed, ..
       } => {
         txn.execute(
           "UPDATE Notes SET completed = ? WHERE uuid = ?",
