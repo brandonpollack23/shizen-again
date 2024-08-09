@@ -23,10 +23,8 @@ CREATE TABLE IF NOT EXISTS Notes (
 
 CREATE TABLE IF NOT EXISTS Children (
   parent TEXT NOT NULL,
-  child TEXT NOT NULL
-  -- TODO
-  -- FOREIGN KEY(parent) REFERENCES Notes(uuid),
-  -- FOREIGN KEY(child) REFERENCES Notes(uuid)
+  child TEXT NOT NULL,
+  FOREIGN KEY(parent) REFERENCES Notes(uuid)
 );
 CREATE INDEX IF NOT EXISTS ParentToChildIndex
 ON Children (parent);
@@ -35,10 +33,9 @@ ON Children (child);
 
 CREATE TABLE IF NOT EXISTS Dependencies (
   blocker TEXT NOT NULL,
-  blockee TEXT NOT NULL
-  -- TODO
-  -- FOREIGN KEY(parent) REFERENCES Notes(uuid),
-  -- FOREIGN KEY(child) REFERENCES Notes(uuid)
+  blockee TEXT NOT NULL,
+  FOREIGN KEY(blocker) REFERENCES Notes(uuid),
+  FOREIGN KEY(blockee) REFERENCES Notes(uuid)
 );
 CREATE INDEX IF NOT EXISTS BlockerToBlockeeIndex
 ON Dependencies (blocker);
