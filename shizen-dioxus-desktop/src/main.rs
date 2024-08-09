@@ -5,11 +5,9 @@ use std::path::PathBuf;
 
 use dioxus::prelude::*;
 use dioxus_logger::tracing::{error, info, Level};
-use libshizen::{
-  entities::Note,
-  storage::TodoStorage,
-};
+use libshizen::{entities::Note, storage::TodoStorage};
 
+// TODO homeburger
 // TODO note view
 // TODO settings view (with other sync hosts)
 // TODO pull or push button to refresh list view
