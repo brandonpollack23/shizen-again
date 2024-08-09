@@ -1,5 +1,5 @@
 //! Generic storage for TODOs
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 
 use crate::{
   entities::{Action, Note, NoteId, PeerId, PeerInfo},

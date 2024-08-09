@@ -1,14 +1,19 @@
 //! Note: all assets (tailwind.css/main.css/etc.) must be prefixed with the workspace path.
 #![allow(non_snake_case)]
 
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use dioxus::prelude::*;
-use dioxus_logger::tracing::{error, info, trace, Level};
+use dioxus_logger::tracing::{error, info, Level};
 use libshizen::{
-  entities::{Note, NoteId},
-  storage::{rusqlite::RusqliteStorage, TodoStorage},
+  entities::Note,
+  storage::TodoStorage,
 };
+
+// TODO note view
+// TODO settings view (with other sync hosts)
+// TODO pull or push button to refresh list view
+// TODO animations
 
 #[derive(Clone, Routable, Debug, PartialEq)]
 enum Route {
@@ -43,7 +48,7 @@ fn App() -> Element {
     info!("Attempting to open/create database at path {default_storage_path:?}");
 
     // TODO combine open with create with a flag for creation param.
-    std::fs::create_dir_all(&default_storage_path.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(default_storage_path.parent().unwrap()).unwrap();
     let rusqlitedb = libshizen::DefaultStorage::open_create(Some(&default_storage_path), false);
     if let Err(e) = rusqlitedb {
       info!("Error Creating database: {e:?}");
@@ -54,7 +59,7 @@ fn App() -> Element {
     }
 
     let db: Box<dyn TodoStorage> = Box::new(rusqlitedb.unwrap());
-    return Signal::new(db);
+    Signal::new(db)
   });
 
   rsx! {
@@ -78,7 +83,7 @@ fn NoteListView() -> Element {
   // TODO https://github.com/DioxusLabs/dioxus/blob/main/examples/todomvc.rs use this example, instead of hashmap use my database.
 
   rsx! {
-      if todos().len() > 0 {
+      if !todos().is_empty() {
         ul { class: "bg-slate-50",
           for note in &todos() {
             li {
@@ -116,7 +121,7 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
         if note.read().description.is_some() {
           div { class: "italic", "{note.read().description.as_ref().unwrap()}" }
         }
-        if note.read().notes_this_blocks.len() > 0 {
+        if !note.read().notes_this_blocks.is_empty() {
           div { class: "italic",
             span { "Blocking: [" }
             span { class: "text-ellipsis", "{blocklist_str}" }
@@ -141,6 +146,3 @@ fn toggle_note_complete(mut db: TodoStorageSignal, note: ReadOnlySignal<Note>) {
     );
   }
 }
-
-// TODO note view
-// TODO settings view (with other sync hosts)

@@ -221,13 +221,13 @@ fn format_note(note: &Note) -> String {
     note
       .notes_this_blocks
       .iter()
-      .map(|n| format!("{}", n.to_string()))
+      .map(|n| format!("{}", n))
       .collect::<Vec<_>>()
       .join(","),
     note
       .notes_blocking_this
       .iter()
-      .map(|n| format!("{}", n.to_string()))
+      .map(|n| format!("{}", n))
       .collect::<Vec<_>>()
       .join(","),
   )

@@ -789,7 +789,7 @@ impl TodoStorage for RusqliteStorage {
       })?
       .collect();
 
-    Ok(actions?)
+    actions
   }
 
   fn load_redo_queue(&self) -> ShizenResult<Vec<Action>> {
@@ -805,7 +805,7 @@ impl TodoStorage for RusqliteStorage {
       })?
       .collect();
 
-    Ok(actions?)
+    actions
   }
 
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note> {
@@ -868,7 +868,7 @@ impl TodoStorage for RusqliteStorage {
       })?
       .collect();
 
-    Ok(peer_infos?)
+    peer_infos
   }
 
   fn get_peer(&self, peer_id: &PeerId) -> ShizenResult<PeerInfo> {
@@ -929,7 +929,7 @@ impl TodoStorage for RusqliteStorage {
       &txn,
       note_id,
       description,
-      old_description.as_ref().map(|d| d.as_str()),
+      old_description.as_deref(),
     )?;
     txn.commit()?;
 
@@ -1176,8 +1176,8 @@ impl TodoStorage for RusqliteStorage {
         Self::update_description_txn(
           &txn,
           &id,
-          new_description.as_ref().map(|d| d.as_str()),
-          old_description.as_ref().map(|d| d.as_str()),
+          new_description.as_deref(),
+          old_description.as_deref(),
         )?;
       }
       Action::ChangeParent { id, old_parent, .. } => {
