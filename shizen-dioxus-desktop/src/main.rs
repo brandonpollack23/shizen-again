@@ -40,7 +40,7 @@ fn App() -> Element {
     // let default_storage_path = format!("{}/shizen.db", env!("HOME"));
     let default_storage_path: PathBuf = "testdb/test.db".into();
 
-    info!("Attempting to create database at path {default_storage_path:?}");
+    info!("Attempting to open/create database at path {default_storage_path:?}");
 
     // TODO combine open with create with a flag for creation param.
     std::fs::create_dir_all(&default_storage_path.parent().unwrap()).unwrap();
@@ -70,16 +70,14 @@ fn App() -> Element {
 // TODO ghosting completed parents.
 #[component]
 fn NoteListView() -> Element {
-  let db = use_database();
-  // TODO show_blocked
-  // TODO Error handling instead of unwrap using ErrorBoundary: https://dioxuslabs.com/learn/0.5/cookbook/error_handling
-  let todos = use_memo(move || db.read().load_all_unblocked_notes().unwrap());
+  // TODO show_blocked flag
   // TODO async load all unblocked notes in a coroutine or something.
+  let db = use_database();
+  let todos = use_memo(move || db.read().load_all_unblocked_notes().unwrap());
 
   // TODO https://github.com/DioxusLabs/dioxus/blob/main/examples/todomvc.rs use this example, instead of hashmap use my database.
 
   rsx! {
-    // if let Ok(unblocked_notes) = db.read().load_all_unblocked_notes() {
       if todos().len() > 0 {
         ul { class: "bg-slate-50",
           for note in &todos() {
@@ -89,9 +87,8 @@ fn NoteListView() -> Element {
           }
         }
       }
-    // } else {
-    //   div { class: "text-red", "Error Loading Notes!" }
-    // }
+    // TODO Error handling instead of unwrap using ErrorBoundary: https://dioxuslabs.com/learn/0.5/cookbook/error_handling
+    // div { class: "text-red", "Error Loading Notes!" }
   }
 }
 
