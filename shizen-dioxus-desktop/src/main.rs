@@ -7,7 +7,6 @@ use dioxus::prelude::*;
 use dioxus_logger::tracing::{error, info, Level};
 use libshizen::{entities::Note, storage::TodoStorage};
 
-// TODO homeburger
 // TODO note view
 // TODO settings view (with other sync hosts)
 // TODO pull or push button to refresh list view
@@ -61,7 +60,37 @@ fn App() -> Element {
   });
 
   rsx! {
-    div { class: "bg-slate-300 h-screen", Router::<Route> {} }
+    div { class: "bg-slate-200 h-screen", HomeburgerLayout { Router::<Route> {} } }
+  }
+}
+
+#[component]
+fn HomeburgerLayout(children: Element) -> Element {
+  let mut is_open = use_signal(|| false);
+
+  rsx! {
+    // TODO https://chatgpt.com/share/a35e9f13-ea58-43ed-962e-9fb4f7b2d753
+    div { class: "flex flex-row h-screen",
+      // invisible column with hamburger at the top.
+      div {
+        class: "bg-indigo-300 pl-[.5] pr-[.5] transition-transform transform-gpu",
+        class: if is_open() {
+          "translate-x-full"
+        } else {
+          "translate-x-0"
+        },
+
+        div {
+          img {
+            class: "h-8 w-8",
+            src: "res/hamburger.svg",
+            alt: "Hamburger menu",
+            onclick: move |_| *is_open.write() = !is_open()
+          }
+        }
+      }
+      {children}
+    }
   }
 }
 
@@ -81,18 +110,15 @@ fn NoteListView() -> Element {
   // TODO https://github.com/DioxusLabs/dioxus/blob/main/examples/todomvc.rs use this example, instead of hashmap use my database.
 
   rsx! {
-      if !todos().is_empty() {
-        ul { class: "bg-slate-50",
-          for note in &todos() {
-            li {
-              key: "{note.id}",
-              TodoListItem { db, note: note.clone() }
-            }
-          }
+    if !todos().is_empty() {
+      ul { class: "bg-slate-50 w-screen",
+      for note in &todos() {
+        li { key: "{note.id}",
+        TodoListItem { db, note: note.clone() }
         }
       }
-    // TODO Error handling instead of unwrap using ErrorBoundary: https://dioxuslabs.com/learn/0.5/cookbook/error_handling
-    // div { class: "text-red", "Error Loading Notes!" }
+      }
+    }
   }
 }
 
@@ -111,22 +137,26 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
   rsx! {
     div { class: "flex flex-row mb-3 p-2 shadow cursor-grab",
     // Notes async event handlers also exist (dioxus provides async method)
-      input { class: "self-center mr-3 w-6 h-6", onclick: move |_| toggle_note_complete(db, note), r#type: "checkbox" }
+    input {
+      class: "self-center mr-3 w-6 h-6",
+      onclick: move |_| toggle_note_complete(db, note),
+      r#type: "checkbox"
+    }
+    div {
       div {
-        div {
-          p { class: "font-bold", "{note.read().title}" }
-        }
-        if note.read().description.is_some() {
-          div { class: "italic", "{note.read().description.as_ref().unwrap()}" }
-        }
-        if !note.read().notes_this_blocks.is_empty() {
-          div { class: "italic",
-            span { "Blocking: [" }
-            span { class: "text-ellipsis", "{blocklist_str}" }
-            span { "]" }
-          }
+        p { class: "font-bold", "{note.read().title}" }
+      }
+      if note.read().description.is_some() {
+        div { class: "italic", "{note.read().description.as_ref().unwrap()}" }
+      }
+      if !note.read().notes_this_blocks.is_empty() {
+        div { class: "italic",
+        span { "Blocking: [" }
+        span { class: "text-ellipsis", "{blocklist_str}" }
+        span { "]" }
         }
       }
+    }
     }
   }
 }
