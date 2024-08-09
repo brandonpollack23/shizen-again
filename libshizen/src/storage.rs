@@ -33,7 +33,7 @@ pub trait TodoStorage {
   fn load_all_notes(&self) -> ShizenResult<Vec<Note>>;
   fn load_all_incomplete_notes(&self) -> ShizenResult<Vec<Note>>;
   fn load_all_complete_notes(&self) -> ShizenResult<Vec<Note>>;
-  fn load_all_unblocked_notes(&self) -> ShizenResult<Vec<Note>>;
+  fn load_all_unblocked_notes(&self, load_completed: bool) -> ShizenResult<Vec<Note>>;
   fn load_all_changes_since_clock(&self, clock: usize) -> ShizenResult<Vec<Action>>;
   fn load_redo_queue(&self) -> ShizenResult<Vec<Action>>;
   fn load_note(&self, note_id: &NoteId) -> ShizenResult<Note>;

@@ -7,6 +7,9 @@ use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+// TODO add peers command.
+// TODO sync with peer(s) command.
+
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
@@ -118,7 +121,7 @@ fn main() {
           "{}",
           format_note_list(
             &database
-              .load_all_unblocked_notes()
+              .load_all_unblocked_notes(false)
               .expect("error loading all notes")
           )
         );

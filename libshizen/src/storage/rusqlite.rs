@@ -759,14 +759,17 @@ impl TodoStorage for RusqliteStorage {
     result
   }
 
-  fn load_all_unblocked_notes(&self) -> ShizenResult<Vec<Note>> {
+  fn load_all_unblocked_notes(&self, load_completed: bool) -> ShizenResult<Vec<Note>> {
     let conn = self.conn.borrow();
-    let mut stmt = conn.prepare(
-      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE blocked IS NULL"
-    )?;
+    let sql = if load_completed {
+      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE blocked IS NULL AND completed = 1"
+    } else {
+      "SELECT uuid, title, description, parent, blocks, blocked, children, completed FROM FullyQualifiedNotes WHERE blocked IS NULL AND completed = 0"
+    };
+    let mut stmt = conn.prepare(sql)?;
 
     let result: ShizenResult<Vec<_>> = stmt
-      .query_and_then((), Self::row_to_note)?
+      .query_and_then([], Self::row_to_note)?
       .map(|v: ShizenResult<_>| v.map_err(Into::into))
       .collect();
 

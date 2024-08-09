@@ -4,7 +4,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use dioxus::prelude::*;
-use dioxus_logger::tracing::{error, info, Level};
+use dioxus_logger::tracing::{error, info, trace, Level};
 use libshizen::{
   entities::{Note, NoteId},
   storage::{rusqlite::RusqliteStorage, TodoStorage},
@@ -73,7 +73,7 @@ fn NoteListView() -> Element {
   // TODO show_blocked flag
   // TODO async load all unblocked notes in a coroutine or something.
   let db = use_database();
-  let todos = use_memo(move || db.read().load_all_unblocked_notes().unwrap());
+  let todos = use_memo(move || db.read().load_all_unblocked_notes(false).unwrap());
 
   // TODO https://github.com/DioxusLabs/dioxus/blob/main/examples/todomvc.rs use this example, instead of hashmap use my database.
 
@@ -82,6 +82,7 @@ fn NoteListView() -> Element {
         ul { class: "bg-slate-50",
           for note in &todos() {
             li {
+              key: "{note.id}",
               TodoListItem { db, note: note.clone() }
             }
           }
@@ -93,8 +94,11 @@ fn NoteListView() -> Element {
 }
 
 #[component]
-fn TodoListItem(db: TodoStorageSignal, note: Note) -> Element {
+fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
+  let db = use_database();
+
   let blocklist_str = note
+    .read()
     .notes_this_blocks
     .iter()
     .map(|n| n.0.to_string())
@@ -103,15 +107,16 @@ fn TodoListItem(db: TodoStorageSignal, note: Note) -> Element {
 
   rsx! {
     div { class: "flex flex-row mb-3 p-2 shadow cursor-grab",
-      input { class: "self-center mr-3 w-6 h-6", r#type: "checkbox" }
+    // Notes async event handlers also exist (dioxus provides async method)
+      input { class: "self-center mr-3 w-6 h-6", onclick: move |_| toggle_note_complete(db, note), r#type: "checkbox" }
       div {
         div {
-          p { class: "font-bold", "{note.title}" }
+          p { class: "font-bold", "{note.read().title}" }
         }
-        if note.description.is_some() {
-          div { class: "italic", "{note.description.unwrap()}" }
+        if note.read().description.is_some() {
+          div { class: "italic", "{note.read().description.as_ref().unwrap()}" }
         }
-        if note.notes_this_blocks.len() > 0 {
+        if note.read().notes_this_blocks.len() > 0 {
           div { class: "italic",
             span { "Blocking: [" }
             span { class: "text-ellipsis", "{blocklist_str}" }
@@ -123,7 +128,10 @@ fn TodoListItem(db: TodoStorageSignal, note: Note) -> Element {
   }
 }
 
-fn toggle_note_complete(db: &mut Signal<Box<dyn TodoStorage>>, note: Note) {
+fn toggle_note_complete(mut db: TodoStorageSignal, note: ReadOnlySignal<Note>) {
+  let note = note.read();
+  info!("Marking note {:?} completed: {}", note.id, !note.completed);
+
   if let Err(e) = db.write().set_completed(&note.id, !note.completed) {
     error!(
       "Error marking note {} as {}:\n\t{:#?}",
@@ -135,3 +143,4 @@ fn toggle_note_complete(db: &mut Signal<Box<dyn TodoStorage>>, note: Note) {
 }
 
 // TODO note view
+// TODO settings view (with other sync hosts)
