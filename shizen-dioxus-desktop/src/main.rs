@@ -5,17 +5,23 @@ use std::path::PathBuf;
 
 use dioxus::prelude::*;
 use dioxus_logger::tracing::{error, info, Level};
-use libshizen::{entities::Note, storage::TodoStorage};
+use libshizen::{
+  entities::{Note, NoteId},
+  storage::TodoStorage,
+};
 
 // TODO note view
 // TODO settings view (with other sync hosts)
 // TODO pull or push button to refresh list view
 // TODO animations
 
+// TODO navbar(column) needs to be changed to work around route https://dioxuslabs.com/learn/0.5/router/example/full-code
 #[derive(Clone, Routable, Debug, PartialEq)]
 enum Route {
   #[route("/")]
   NoteListView,
+  #[route("/note/:note_id")]
+  NoteView { note_id: NoteId },
 }
 
 type TodoStorageSignal = Signal<Box<dyn TodoStorage>>;
@@ -161,6 +167,12 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
       }
     }
   }
+}
+
+#[component]
+fn NoteView(note_id: NoteId) -> Element {
+  let db = use_database();
+  rsx! {}
 }
 
 fn use_database() -> TodoStorageSignal {

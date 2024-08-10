@@ -1,4 +1,4 @@
-use std::{fmt::Display, net::SocketAddr};
+use std::{fmt::Display, net::SocketAddr, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -17,6 +17,14 @@ pub struct Note {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NoteId(pub Uuid);
+
+impl FromStr for NoteId {
+  type Err = uuid::Error;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    Ok(NoteId(Uuid::from_str(s)?))
+  }
+}
 
 impl Display for NoteId {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
