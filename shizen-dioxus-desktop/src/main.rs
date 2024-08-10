@@ -186,41 +186,57 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
 }
 
 #[component]
-fn NoteView(note_id: NoteId) -> Element {
-  let db = use_database();
-  let note = use_memo(move || db.read().load_note(&note_id).expect("Could not load note"));
+fn NoteView(note_id: ReadOnlySignal<NoteId>) -> Element {
+  let mut db = use_database();
+  let note = use_memo(move || {
+    db.read()
+      .load_note(&note_id.read())
+      .expect("Could not load note")
+  });
   let notes_this_blocks = &note.read().notes_this_blocks;
   let notes_blocking_this = &note.read().notes_blocking_this;
   let children = &note.read().children_ids;
 
+  // TODO replace inputs with regular text areas and get the values with ids or events.
   rsx! {
-    div {
-      div { class: "inline-block",
+    div { class: "p-2 pl-3 bg-slate-50 min-w-full",
+      div { class: "flex items-center space-x-4",
         input {
-          class: "mr-3 w-6 h-6 hover:cursor-pointer",
+          class: "w-6 h-6 hover:cursor-pointer",
           // onclick: move |_| toggle_note_complete(db, note.clone().into()),
           checked: note.read().completed,
           r#type: "checkbox"
         }
-        h2 { class: "contenteditable", "{note.read().title}" }
+        input {
+          class: "text-2xl",
+          contenteditable: true,
+          oninput: move |ev| {
+              db.write().update_title(&note_id.read(), &ev.data.value()).unwrap()
+          },
+          value: "{note.read().title}"
+        }
       }
 
       br {}
 
       if note.read().description.is_some() {
-        p { class: "contenteditable", "{note.read().description.as_ref().unwrap()}" }
+        p { class: "text-xl", "Description:" }
+        textarea { class: "min-w-80", value: "{note.read().description.as_ref().unwrap()}" }
       }
 
-      p { "Relations" }
+      br {}
+
+      p { class: "text-2xl", "Relations" }
 
       if note.read().parent_id.as_ref().is_some() {
         // TODO link this
-        p { "Parent:" }
+        p { class: "text-xl", "Parent:" }
         a { "{note.read().parent_id.as_ref().unwrap().0.to_string()}" }
       }
 
       if !children.is_empty() {
-        p { "Children:" }
+        br {}
+        p { class: "text-xl", "Children:" }
         ul {
           // TODO get note info and use title and link.
           for note in children {
@@ -231,7 +247,8 @@ fn NoteView(note_id: NoteId) -> Element {
         }
       }
       if !notes_this_blocks.is_empty() {
-        p { "Notes blocked by this:" }
+        br {}
+        p { class: "text-xl", "Notes blocked by this:" }
         ul {
           // TODO get note info and use title and link.
           for note in notes_this_blocks {
@@ -242,7 +259,8 @@ fn NoteView(note_id: NoteId) -> Element {
         }
       }
       if !notes_blocking_this.is_empty() {
-        p { "Notes blocking this:" }
+        br {}
+        p { class: "text-xl", "Notes blocking this:" }
         ul {
           // TODO get note info and use title and link.
           for note in notes_blocking_this {
