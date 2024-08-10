@@ -20,10 +20,6 @@ enum Route {
 
 type TodoStorageSignal = Signal<Box<dyn TodoStorage>>;
 
-fn use_database() -> TodoStorageSignal {
-  use_context()
-}
-
 fn main() {
   // Init logger
   dioxus_logger::init(Level::INFO).expect("failed to init logger");
@@ -60,7 +56,7 @@ fn App() -> Element {
   });
 
   rsx! {
-    div { class: "bg-slate-200 h-screen", HomeburgerLayout { Router::<Route> {} } }
+    div { class: "bg-slate-200 h-screen w-screen", HomeburgerLayout { Router::<Route> {} } }
   }
 }
 
@@ -70,19 +66,15 @@ fn HomeburgerLayout(children: Element) -> Element {
 
   rsx! {
     // TODO https://chatgpt.com/share/a35e9f13-ea58-43ed-962e-9fb4f7b2d753
-    div { class: "flex flex-row h-screen",
+    div { class: "flex flex-row h-full min-w-fit",
       // invisible column with hamburger at the top.
       div {
         class: "bg-indigo-300 pl-[.5] pr-[.5] transition-transform transform-gpu",
-        class: if is_open() {
-          "translate-x-full"
-        } else {
-          "translate-x-0"
-        },
+        class: if is_open() { "translate-x-full" } else { "translate-x-0" },
 
         div {
           img {
-            class: "h-8 w-8",
+            class: "min-h-8 min-w-8 w-8 h-8",
             src: "res/hamburger.svg",
             alt: "Hamburger menu",
             onclick: move |_| *is_open.write() = !is_open()
@@ -111,12 +103,12 @@ fn NoteListView() -> Element {
 
   rsx! {
     if !todos().is_empty() {
-      ul { class: "bg-slate-50 w-screen",
-      for note in &todos() {
-        li { key: "{note.id}",
-        TodoListItem { db, note: note.clone() }
+      ul { class: "bg-slate-50 w-full",
+        for note in &todos() {
+          li { key: "{note.id}",
+            TodoListItem { db, note: note.clone() }
+          }
         }
-      }
       }
     }
   }
@@ -135,30 +127,44 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
     .join(", ");
 
   rsx! {
-    div { class: "flex flex-row mb-3 p-2 shadow cursor-grab",
-    // Notes async event handlers also exist (dioxus provides async method)
-    input {
-      class: "self-center mr-3 w-6 h-6",
-      onclick: move |_| toggle_note_complete(db, note),
-      r#type: "checkbox"
-    }
-    div {
-      div {
-        p { class: "font-bold", "{note.read().title}" }
+    div { class: "flex flex-row mb-3 p-2 shadow cursor-grab w-full items-center",
+      // Notes async event handlers also exist (dioxus provides async method)
+      input {
+        class: "self-center mr-3 w-6 h-6 hover:cursor-pointer",
+        onclick: move |_| toggle_note_complete(db, note),
+        r#type: "checkbox"
       }
-      if note.read().description.is_some() {
-        div { class: "italic", "{note.read().description.as_ref().unwrap()}" }
-      }
-      if !note.read().notes_this_blocks.is_empty() {
-        div { class: "italic",
-        span { "Blocking: [" }
-        span { class: "text-ellipsis", "{blocklist_str}" }
-        span { "]" }
+      div { class: "overflow-hidden flex-grow min-w-0",
+        div {
+          p { class: "font-bold text-ellipsis whitespace-nowrap", "{note.read().title}" }
+        }
+        if note.read().description.is_some() {
+          div { class: "text-ellipsis italic whitespace-nowrap",
+            "{note.read().description.as_ref().unwrap()}"
+          }
+        }
+        if !note.read().notes_this_blocks.is_empty() {
+          div { class: "text-ellipsis whitespace-nowrap italic",
+            span { "Blocking: [" }
+            // TODO instead of a blocklist string use a title.
+            span { "{blocklist_str}" }
+            span { "]" }
+          }
         }
       }
-    }
+      // TODO when description overflows it hides the details button and there is no ellipses.
+      img {
+        class: "h-8 w-8 min-h-8 min-w-8 p-1 ml-auto flex-shrink-0 hover:cursor-pointer",
+        src: "res/details.svg",
+        alt: "Open note details button",
+        onclick: move |_| todo!()
+      }
     }
   }
+}
+
+fn use_database() -> TodoStorageSignal {
+  use_context()
 }
 
 fn toggle_note_complete(mut db: TodoStorageSignal, note: ReadOnlySignal<Note>) {
