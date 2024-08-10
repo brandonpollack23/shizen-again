@@ -3,7 +3,10 @@
 
 use std::path::PathBuf;
 
-use dioxus::prelude::*;
+use dioxus::{
+  desktop::{LogicalSize, WindowBuilder},
+  prelude::*,
+};
 use dioxus_logger::tracing::{error, info, Level};
 use libshizen::{
   entities::{Note, NoteId},
@@ -33,9 +36,16 @@ fn main() {
   dioxus_logger::init(Level::INFO).expect("failed to init logger");
   info!("starting shizen desktop app...");
 
-  let cfg = dioxus::desktop::Config::new().with_custom_head(
-    r#"<link rel="stylesheet" href="shizen-dioxus-desktop/tailwind.css">"#.to_string(),
-  );
+  let cfg = dioxus::desktop::Config::new()
+    .with_custom_head(
+      r#"<link rel="stylesheet" href="shizen-dioxus-desktop/tailwind.css">"#.to_string(),
+    )
+    .with_window(
+      // TODO persist this stuff in the settings and remember it.
+      WindowBuilder::new()
+        .with_title("Shizen")
+        .with_inner_size(LogicalSize::new(800, 600)),
+    );
   LaunchBuilder::desktop().with_cfg(cfg).launch(App);
 }
 
