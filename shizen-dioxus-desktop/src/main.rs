@@ -130,11 +130,11 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
     div { class: "flex flex-row mb-3 p-2 shadow cursor-grab w-full items-center",
       // Notes async event handlers also exist (dioxus provides async method)
       input {
-        class: "self-center mr-3 w-6 h-6 hover:cursor-pointer",
+        class: "mr-3 w-6 h-6 hover:cursor-pointer",
         onclick: move |_| toggle_note_complete(db, note),
         r#type: "checkbox"
       }
-      div { class: "overflow-hidden flex-grow min-w-0",
+      div { class: "overflow-hidden min-w-0",
         div {
           p { class: "font-bold text-ellipsis whitespace-nowrap", "{note.read().title}" }
         }
