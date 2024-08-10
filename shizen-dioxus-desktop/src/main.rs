@@ -11,8 +11,10 @@ use libshizen::{
 };
 
 // TODO note view
+// TODO back button
 // TODO settings view (with other sync hosts)
 // TODO pull or push button to refresh list view
+// TODO setting to enable/disable markdown rendering.
 // TODO animations
 
 // TODO navbar(column) needs to be changed to work around route https://dioxuslabs.com/learn/0.5/router/example/full-code
@@ -140,7 +142,7 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
         onclick: move |_| toggle_note_complete(db, note),
         r#type: "checkbox"
       }
-      div { class: "overflow-hidden min-w-0",
+      div { class: "flex-grow overflow-hidden min-w-0",
         div {
           p { class: "font-bold text-ellipsis whitespace-nowrap", "{note.read().title}" }
         }
@@ -159,11 +161,15 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
         }
       }
       // TODO when description overflows it hides the details button and there is no ellipses.
-      img {
-        class: "h-8 w-8 min-h-8 min-w-8 p-1 ml-auto flex-shrink-0 hover:cursor-pointer",
-        src: "res/details.svg",
-        alt: "Open note details button",
-        onclick: move |_| todo!()
+      Link {
+        to: Route::NoteView {
+            note_id: note.read().id.clone(),
+        },
+        img {
+          class: "h-8 w-8 min-h-8 min-w-8 p-1 ml-auto flex-shrink-0 hover:cursor-pointer",
+          src: "res/details.svg",
+          alt: "Open note details button"
+        }
       }
     }
   }
@@ -172,7 +178,72 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
 #[component]
 fn NoteView(note_id: NoteId) -> Element {
   let db = use_database();
-  rsx! {}
+  let note = use_memo(move || db.read().load_note(&note_id).expect("Could not load note"));
+  let notes_this_blocks = &note.read().notes_this_blocks;
+  let notes_blocking_this = &note.read().notes_blocking_this;
+  let children = &note.read().children_ids;
+
+  rsx! {
+    div {
+      div { class: "inline-block",
+        input {
+          class: "mr-3 w-6 h-6 hover:cursor-pointer",
+          // onclick: move |_| toggle_note_complete(db, note.clone().into()),
+          checked: note.read().completed,
+          r#type: "checkbox"
+        }
+        h2 { class: "contenteditable", "{note.read().title}" }
+      }
+
+      br {}
+
+      if note.read().description.is_some() {
+        p { class: "contenteditable", "{note.read().description.as_ref().unwrap()}" }
+      }
+
+      p { "Relations" }
+
+      if note.read().parent_id.as_ref().is_some() {
+        // TODO link this
+        p { "Parent:" }
+        a { "{note.read().parent_id.as_ref().unwrap().0.to_string()}" }
+      }
+
+      if !children.is_empty() {
+        p { "Children:" }
+        ul {
+          // TODO get note info and use title and link.
+          for note in children {
+            li {
+              a { "{note.0.to_string()}" }
+            }
+          }
+        }
+      }
+      if !notes_this_blocks.is_empty() {
+        p { "Notes blocked by this:" }
+        ul {
+          // TODO get note info and use title and link.
+          for note in notes_this_blocks {
+            li {
+              a { "{note.0.to_string()}" }
+            }
+          }
+        }
+      }
+      if !notes_blocking_this.is_empty() {
+        p { "Notes blocking this:" }
+        ul {
+          // TODO get note info and use title and link.
+          for note in notes_blocking_this {
+            li {
+              a { "{note.0.to_string()}" }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 fn use_database() -> TodoStorageSignal {
