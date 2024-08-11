@@ -14,7 +14,6 @@ use libshizen::{
 };
 
 // TODO note view
-// TODO back button
 // TODO settings view (with other sync hosts)
 // TODO pull or push button to refresh list view
 // TODO setting to enable/disable markdown rendering.
@@ -187,6 +186,7 @@ fn TodoListItem(db: TodoStorageSignal, note: ReadOnlySignal<Note>) -> Element {
 
 #[component]
 fn NoteView(note_id: ReadOnlySignal<NoteId>) -> Element {
+  let mut navigator = use_navigator();
   let mut db = use_database();
   let note = use_memo(move || {
     db.read()
@@ -199,73 +199,86 @@ fn NoteView(note_id: ReadOnlySignal<NoteId>) -> Element {
 
   // TODO replace inputs with regular text areas and get the values with ids or events.
   rsx! {
-    div { class: "p-2 pl-3 bg-slate-50 min-w-full",
-      div { class: "flex items-center space-x-4",
-        input {
-          class: "w-6 h-6 hover:cursor-pointer",
-          // onclick: move |_| toggle_note_complete(db, note.clone().into()),
-          checked: note.read().completed,
-          r#type: "checkbox"
-        }
-        input {
-          class: "text-2xl",
-          contenteditable: true,
-          oninput: move |ev| {
-              db.write().update_title(&note_id.read(), &ev.data.value()).unwrap()
-          },
-          value: "{note.read().title}"
-        }
-      }
-
-      br {}
-
-      if note.read().description.is_some() {
-        p { class: "text-xl", "Description:" }
-        textarea { class: "min-w-80", value: "{note.read().description.as_ref().unwrap()}" }
-      }
-
-      br {}
-
-      p { class: "text-2xl", "Relations" }
-
-      if note.read().parent_id.as_ref().is_some() {
-        // TODO link this
-        p { class: "text-xl", "Parent:" }
-        a { "{note.read().parent_id.as_ref().unwrap().0.to_string()}" }
-      }
-
-      if !children.is_empty() {
-        br {}
-        p { class: "text-xl", "Children:" }
-        ul {
-          // TODO get note info and use title and link.
-          for note in children {
-            li {
-              a { "{note.0.to_string()}" }
-            }
+    div { class: "bg-slate-50 min-w-full",
+      div { class: "min-h-4 bg-neutral-50",
+        if navigator.can_go_back() {
+          img {
+            class: "min-h-8 min-w-8 w-8 h-8",
+            src: "res/back.svg",
+            alt: "Back button",
+            onclick: move |_| navigator.go_back()
           }
         }
       }
-      if !notes_this_blocks.is_empty() {
+      div { class: "p-2 pl-3",
+        div { class: "flex items-center space-x-4",
+          input {
+            class: "w-6 h-6 hover:cursor-pointer",
+            // onclick: move |_| toggle_note_complete(db, note.clone().into()),
+            checked: note.read().completed,
+            r#type: "checkbox"
+          }
+          input {
+            class: "text-2xl",
+            contenteditable: true,
+            oninput: move |ev| { db.write().update_title(&note_id.read(), &ev.data.value()).unwrap() },
+            value: "{note.read().title}"
+          }
+        }
+
         br {}
-        p { class: "text-xl", "Notes blocked by this:" }
-        ul {
-          // TODO get note info and use title and link.
-          for note in notes_this_blocks {
-            li {
-              a { "{note.0.to_string()}" }
+
+        if note.read().description.is_some() {
+          p { class: "text-xl", "Description:" }
+          textarea {
+            class: "min-w-80",
+            value: "{note.read().description.as_ref().unwrap()}"
+          }
+        }
+
+        br {}
+
+        p { class: "text-2xl", "Relations" }
+
+        if note.read().parent_id.as_ref().is_some() {
+          // TODO link this
+          p { class: "text-xl", "Parent:" }
+          a { "{note.read().parent_id.as_ref().unwrap().0.to_string()}" }
+        }
+
+        if !children.is_empty() {
+          br {}
+          p { class: "text-xl", "Children:" }
+          ul {
+            // TODO get note info and use title and link.
+            for note in children {
+              li {
+                a { "{note.0.to_string()}" }
+              }
             }
           }
         }
-      }
-      if !notes_blocking_this.is_empty() {
-        br {}
-        p { class: "text-xl", "Notes blocking this:" }
-        ul {
-          // TODO get note info and use title and link.
-          for note in notes_blocking_this {
-            li {
-              a { "{note.0.to_string()}" }
+        if !notes_this_blocks.is_empty() {
+          br {}
+          p { class: "text-xl", "Notes blocked by this:" }
+          ul {
+            // TODO get note info and use title and link.
+            for note in notes_this_blocks {
+              li {
+                a { "{note.0.to_string()}" }
+              }
+            }
+          }
+        }
+        if !notes_blocking_this.is_empty() {
+          br {}
+          p { class: "text-xl", "Notes blocking this:" }
+          ul {
+            // TODO get note info and use title and link.
+            for note in notes_blocking_this {
+              li {
+                a { "{note.0.to_string()}" }
+              }
             }
           }
         }
