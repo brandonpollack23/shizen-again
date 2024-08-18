@@ -105,4 +105,10 @@ pub enum Action {
   DeleteNote {
     note: Note,
   },
+  ReorderNote {
+    id: NoteId,
+    old_rank: String,
+    before: Option<NoteId>,
+    after: Option<NoteId>,
+  },
 }

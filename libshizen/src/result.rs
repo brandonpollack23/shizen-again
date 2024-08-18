@@ -47,4 +47,6 @@ pub enum ShizenError {
   PeerAlreadyExists(PeerId),
   #[error("Invalid position, one input must be something")]
   InvalidRankAdjustment,
+  #[error("Lexorank parse error in rank column: {}", .0)]
+  LexorankParseError(#[from] lexorank::error::ParseError),
 }

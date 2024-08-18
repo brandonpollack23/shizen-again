@@ -64,6 +64,10 @@ enum Commands {
     from: String,
     to: String,
   },
+  Reorder {
+    #[command(subcommand)]
+    command: ReorderCommand,
+  },
   Undo,
   Redo,
   #[command(visible_alias = "h")]
@@ -82,6 +86,14 @@ enum Commands {
     #[arg(short, long)]
     peer: Option<Uuid>,
   },
+}
+
+#[derive(Subcommand, PartialEq, Eq)]
+enum ReorderCommand {
+  #[command(visible_alias = "b")]
+  Before { id: NoteId, before: NoteId },
+  #[command(visible_alias = "a")]
+  After { id: NoteId, after: NoteId },
 }
 
 #[derive(Subcommand, PartialEq, Eq)]
@@ -246,6 +258,20 @@ fn main() {
         }
       }
     }
+    Commands::Reorder { command } => {
+      handle_reorder_command(command, &db);
+    }
+  }
+}
+
+fn handle_reorder_command(command: ReorderCommand, db: &RusqliteStorage) {
+  match command {
+    ReorderCommand::Before { id, before } => db
+      .adjust_rank_between(&id, Some(&before), None)
+      .expect("Could not adjust note position"),
+    ReorderCommand::After { id, after } => db
+      .adjust_rank_between(&id, None, Some(&after))
+      .expect("Could not adjust note position"),
   }
 }
 

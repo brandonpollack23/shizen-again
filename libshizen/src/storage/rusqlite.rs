@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::rc::Rc;
 
+use lexorank::{Bucket, LexoRank, Rank};
 use rusqlite::Error::QueryReturnedNoRows;
 use rusqlite::{Connection, Row};
 use tracing::{info, trace, warn};
@@ -374,6 +375,27 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     Ok(())
   }
 
+  fn get_rank_for_new_note(conn: &Connection) -> ShizenResult<LexoRank> {
+    let has_note: bool =
+      conn.query_row_and_then("SELECT COUNT(*) > 0 FROM Notes", [], |r| r.get(0))?;
+    if !has_note {
+      return Ok(LexoRank::new(
+        Bucket::new(0).unwrap(),
+        Rank::new("a").unwrap(),
+      ));
+    }
+    let last_rank_str: String = conn.query_row_and_then(
+      "SELECT rank FROM Notes ORDER BY rank DESC LIMIT 1",
+      [],
+      |r| -> ShizenResult<_> { Ok(r.get(0)?) },
+    )?;
+
+    let last_rank = LexoRank::from_string(&last_rank_str)?;
+
+    // TODO configure taking next or last (change above to asc vs desc and use prev or next here).
+    Ok(last_rank.next())
+  }
+
   fn create_new_note_txn(
     txn: &Connection,
     id: Option<&NoteId>,
@@ -387,11 +409,19 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
       }
     }
 
+    let rank = Self::get_rank_for_new_note(txn)?;
+
     let uuid = id.cloned().unwrap_or_else(|| NoteId(Uuid::new_v4()));
-    trace!("Creating note: {title} {description:?}");
+    trace!("Creating note: {title} {description:?} with rank {rank:?}");
     txn.execute(
-      "INSERT INTO Notes (uuid, title, description, completed) VALUES (?, ?, ?, ?)",
-      (uuid.to_string(), title, description, false),
+      "INSERT INTO Notes (uuid, title, description, completed, rank) VALUES (?, ?, ?, ?, ?)",
+      (
+        uuid.to_string(),
+        title,
+        description,
+        false,
+        rank.to_string(),
+      ),
     )?;
 
     if let Some(p) = parent_id {
@@ -656,6 +686,78 @@ INNER JOIN FullyQualifiedNotes AS n ON nh.blocker = n.uuid
     )?;
 
     Self::insert_mutations(txn, &[Action::DeleteNote { note: old_note }])?;
+
+    Ok(())
+  }
+
+  fn adjust_rank_between_txn(
+    txn: &Connection,
+    note_id: &NoteId,
+    after: Option<&NoteId>,
+    before: Option<&NoteId>,
+  ) -> ShizenResult<()> {
+    trace!("Adjusting rank of {note_id:#?} between {after:#?} and before {before:#?}");
+
+    // TODO if after or before are none then infer (if not end of list).
+
+    let after_rank: Option<ShizenResult<LexoRank>> = after.and_then(|n| {
+      Some(
+        txn
+          .query_row(
+            "SELECT rank FROM Notes WHERE uuid = ?",
+            [n.0.to_string()],
+            |r: &Row| r.get::<_, String>(0),
+          )
+          .map(|s| LexoRank::from_string(&s).unwrap())
+          .map_err(|e| e.into()),
+      )
+    });
+    let before_rank: Option<ShizenResult<LexoRank>> = before.and_then(|n| {
+      Some(
+        txn
+          .query_row(
+            "SELECT rank FROM Notes WHERE uuid = ?",
+            [n.0.to_string()],
+            |r: &Row| r.get::<_, String>(0),
+          )
+          .map(|s| LexoRank::from_string(&s).unwrap())
+          .map_err(|e| e.into()),
+      )
+    });
+
+    let (after_rank, before_rank) = (after_rank.transpose()?, before_rank.transpose()?);
+
+    trace!("Rank to be moved after {after_rank:?} and before {before_rank:?}");
+
+    let new_rank = match (after_rank, before_rank) {
+      (None, Some(r)) => r.prev(),
+      (Some(r), None) => r.next(),
+      (Some(a), Some(b)) => a.between(&b).unwrap(),
+      (None, None) => unreachable!(),
+    };
+
+    let old_rank: String = txn.query_row(
+      "SELECT rank FROM Notes WHERE uuid = ?",
+      [note_id.0.to_string()],
+      |r| r.get(0),
+    )?;
+
+    trace!("changing rank from {old_rank:?} to {new_rank:?}");
+
+    txn.execute(
+      "UPDATE Notes SET rank = ? WHERE uuid = ?",
+      (new_rank.to_string(), note_id.0.to_string()),
+    )?;
+
+    Self::insert_mutations(
+      &txn,
+      &[Action::ReorderNote {
+        id: note_id.clone(),
+        before: before.cloned(),
+        after: after.cloned(),
+        old_rank,
+      }],
+    )?;
 
     Ok(())
   }
@@ -988,50 +1090,9 @@ impl TodoStorage for RusqliteStorage {
     }
 
     let mut conn = self.conn.borrow_mut();
-    let mut txn = conn.transaction()?;
+    let txn = conn.transaction()?;
 
-    let after_rank: Option<ShizenResult<lexorank::LexoRank>> = after.and_then(|n| {
-      Some(
-        txn
-          .query_row(
-            "SELECT rank FROM Notes WHERE uuid = ?",
-            [n.0.to_string()],
-            |r: &Row| r.get::<_, String>(0),
-          )
-          .map(|s| lexorank::LexoRank::from_string(&s).unwrap())
-          .map_err(|e| e.into()),
-      )
-    });
-    let before_rank: Option<ShizenResult<lexorank::LexoRank>> = before.and_then(|n| {
-      Some(
-        txn
-          .query_row(
-            "SELECT rank FROM Notes WHERE uuid = ?",
-            [n.0.to_string()],
-            |r: &Row| r.get::<_, String>(0),
-          )
-          .map(|s| lexorank::LexoRank::from_string(&s).unwrap())
-          .map_err(|e| e.into()),
-      )
-    });
-
-    let (after_rank, before_rank) = (after_rank.transpose()?, before_rank.transpose()?);
-
-    let new_rank = match (after_rank, before_rank) {
-      (None, Some(r)) => r.prev(),
-      (Some(r), None) => r.next(),
-      (Some(a), Some(b)) => a.between(&b).unwrap(),
-      (None, None) => unreachable!(),
-    };
-
-    txn.execute(
-      "UPDATE Notes SET rank = ? WHERE uuid = ?",
-      (new_rank.to_string(), note_id.0.to_string()),
-    )?;
-
-    // TODO NOW undo/redo action
-    // test
-    // add to cli
+    Self::adjust_rank_between_txn(&txn, note_id, after, before)?;
 
     txn.commit()?;
     Ok(())
@@ -1159,6 +1220,12 @@ impl TodoStorage for RusqliteStorage {
           )?;
         }
       }
+      Action::ReorderNote { id, old_rank, .. } => {
+        txn.execute(
+          "UPDATE Notes rank = ? WHERE uuid = ?",
+          (old_rank, id.0.to_string()),
+        )?;
+      }
     }
 
     txn.execute("DELETE FROM Mutations WHERE id = ?", [id_to_remove])?;
@@ -1248,6 +1315,11 @@ impl TodoStorage for RusqliteStorage {
       }
       Action::DeleteNote { note } => {
         Self::delete_note_txn(&txn, &note.id)?;
+      }
+      Action::ReorderNote {
+        id, before, after, ..
+      } => {
+        Self::adjust_rank_between_txn(&txn, &id, after.as_ref(), before.as_ref())?;
       }
     }
 
@@ -1364,6 +1436,11 @@ impl TodoStorage for RusqliteStorage {
       Action::DeleteNote { note } => {
         Self::delete_note_txn(&txn, &note.id)?;
       }
+      Action::ReorderNote {
+        id, before, after, ..
+      } => {
+        Self::adjust_rank_between_txn(&txn, id, before.as_ref(), after.as_ref())?;
+      }
     }
 
     txn.commit()?;
@@ -1392,10 +1469,7 @@ const SCHEMA_MIGRATIONS: [(&str, Option<fn(conn: &Connection) -> ShizenResult<()
 )];
 
 fn schema_migration_add_user_order(conn: &Connection) -> ShizenResult<()> {
-  let mut lexorank = lexorank::LexoRank::new(
-    lexorank::Bucket::new(0).unwrap(),
-    lexorank::Rank::new("a").unwrap(),
-  );
+  let mut lexorank = LexoRank::new(Bucket::new(0).unwrap(), Rank::new("a").unwrap());
   let mut stmnt = conn.prepare("SELECT uuid FROM Notes")?;
   let mut rows = stmnt.query([])?;
 
@@ -1852,6 +1926,33 @@ mod test {
 
     let clock = s.get_clock().unwrap();
     assert_eq!(clock, 2);
+  }
+
+  #[test]
+  #[traced_test]
+  fn adjust_rank_between_test() {
+    let s = RusqliteStorage::open(None).unwrap();
+
+    let a = s.create_new_note("a", None, None).unwrap();
+    let b = s.create_new_note("b", None, None).unwrap();
+    let c = s.create_new_note("c", None, None).unwrap();
+
+    let notes = s.load_all_notes().unwrap();
+    assert_eq!(notes, vec![a.clone(), b.clone(), c.clone()]);
+
+    s.adjust_rank_between(&a.id, Some(&b.id), Some(&c.id))
+      .unwrap();
+
+    let notes = s.load_all_notes().unwrap();
+    assert_eq!(notes, vec![b.clone(), a.clone(), c.clone()]);
+
+    s.adjust_rank_between(&c.id, None, Some(&b.id)).unwrap();
+    let notes = s.load_all_notes().unwrap();
+    assert_eq!(notes, vec![c.clone(), b.clone(), a.clone()]);
+
+    s.adjust_rank_between(&c.id, Some(&a.id), None).unwrap();
+    let notes = s.load_all_notes().unwrap();
+    assert_eq!(notes, vec![b.clone(), a.clone(), c.clone()]);
   }
 
   // TODO cannot add self as peer test.
