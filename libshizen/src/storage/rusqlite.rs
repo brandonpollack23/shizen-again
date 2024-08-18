@@ -13,8 +13,6 @@ use crate::storage::TodoStorage;
 use crate::sync::{SyncConnection, SyncResults};
 use crate::{ShizenError, ShizenResult};
 
-// TODO trace logging
-
 macro_rules! sqlite_str {
   ($path:expr) => {
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), $path))
@@ -52,7 +50,7 @@ impl RusqliteStorage {
       info!("Opening sqlite database: {:?}", db_path.as_ref().unwrap());
     }
 
-    let conn = if let Some(p) = db_path {
+    let mut conn = if let Some(p) = db_path {
       if (p.parent().is_some() && !p.parent().unwrap().exists())
         && !p.to_str().unwrap().starts_with("file::memory:")
         && !p.to_str().unwrap().contains("mode=memory")
@@ -82,7 +80,7 @@ impl RusqliteStorage {
       )?;
     }
 
-    run_schema_migrations(&conn)?;
+    run_schema_migrations(&mut conn)?;
 
     info!("Database running at version {}", get_schema_version(&conn)?);
 
@@ -1325,23 +1323,67 @@ pub fn libshizen_sql_init_str() -> &'static str {
   sqlite_str!("/sql/sqlite/init.sql")
 }
 
-const CURRENT_VERSION: usize = 1;
-const SCHEMA_MIGRATIONS: [&str; 0] = [];
+const MIGRATE_DB_TO_VERSION: usize = 2;
+/// Array of tuples of sql text to run along with functional alterations to get
+/// the database migrated into a good state (eg assigning ranks).
+const SCHEMA_MIGRATIONS: [(&str, Option<fn(conn: &Connection) -> ShizenResult<()>>); 1] = [(
+  sqlite_str!("/sql/sqlite/migrations/1_add_user_order.sql"),
+  Some(schema_migration_add_user_order),
+)];
 
-fn run_schema_migrations(conn: &Connection) -> ShizenResult<()> {
-  let version = get_schema_version(conn)?;
+fn schema_migration_add_user_order(conn: &Connection) -> ShizenResult<()> {
+  let mut lexorank = lexorank::LexoRank::new(
+    lexorank::Bucket::new(0).unwrap(),
+    lexorank::Rank::new("a").unwrap(),
+  );
+  let mut stmnt = conn.prepare("SELECT uuid FROM Notes")?;
+  let mut rows = stmnt.query([])?;
 
-  for v in version..CURRENT_VERSION {
-    conn
-      .execute_batch(SCHEMA_MIGRATIONS[v])
-      .map_err(|e| ShizenError::MigrationError(v, e))?;
+  while let Some(row) = rows.next()? {
+    let uuid: String = row.get(0)?;
+    conn.execute(
+      "UPDATE Notes SET rank = ? WHERE UUID = ?",
+      (lexorank.to_string(), uuid),
+    )?;
+    lexorank = lexorank.next();
   }
 
   Ok(())
 }
 
-fn get_schema_version(conn: &Connection) -> Result<usize, ShizenError> {
+fn run_schema_migrations(conn: &mut Connection) -> ShizenResult<()> {
+  let version = get_schema_version(conn)?;
+
+  for v in version..MIGRATE_DB_TO_VERSION {
+    let (sql, alteration) = &SCHEMA_MIGRATIONS[v - 1];
+    info!("Running schema migration:\n{sql}");
+
+    let txn = conn.transaction()?;
+    txn
+      .execute_batch(sql)
+      .map_err(|e| ShizenError::MigrationError(v, e))?;
+
+    if let Some(f) = alteration {
+      info!("running associated update logic...");
+      f(&txn)?;
+    }
+
+    set_schema_version(&txn, v + 1)?;
+
+    txn.commit()?;
+    info!("Done with migration from {v}!");
+  }
+
+  Ok(())
+}
+
+fn get_schema_version(conn: &Connection) -> ShizenResult<usize> {
   Ok(conn.query_row("SELECT version FROM SchemaVersion", (), |r| r.get(0))?)
+}
+
+fn set_schema_version(conn: &Connection, version: usize) -> ShizenResult<()> {
+  conn.execute("UPDATE SchemaVersion SET version = ?", [version])?;
+  Ok(())
 }
 
 #[cfg(test)]

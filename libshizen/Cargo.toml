@@ -7,6 +7,7 @@ edition = "2021"
 web = ["uuid/js"]
 
 [dependencies]
+lexorank = "2.0.0"
 # TODO use workspace for all.
 rusqlite = { version = "0.32.0", features = [
   "bundled-full",

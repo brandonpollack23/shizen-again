@@ -59,7 +59,8 @@ LEFT JOIN Children AS children ON n.uuid = children.parent
 LEFT JOIN Dependencies AS blocks ON n.uuid = blocks.blocker
 LEFT JOIN Dependencies AS blocked ON n.uuid = blocked.blockee
 LEFT JOIN Notes AS blocker_done ON blocked.blocker = blocker_done.uuid
-GROUP BY n.uuid, n.title, n.description, children.parent, n.completed;
+GROUP BY n.uuid, n.title, n.description, children.parent, n.completed
+ORDER BY n.rank;
 
 CREATE TABLE IF NOT EXISTS Mutations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
