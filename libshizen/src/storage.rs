@@ -54,6 +54,12 @@ pub trait TodoStorage {
   fn add_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
   fn remove_blocked_note(&self, note_id: &NoteId, blocked_note: &NoteId) -> ShizenResult<()>;
   fn set_peer_clock(&self, peer_id: &PeerId, clock: usize) -> ShizenResult<()>;
+  fn adjust_rank_between(
+    &self,
+    note_id: &NoteId,
+    after: Option<&NoteId>,
+    before: Option<&NoteId>,
+  ) -> ShizenResult<()>;
 
   fn apply_action(&self, action: &Action) -> ShizenResult<()>;
 

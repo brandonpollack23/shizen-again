@@ -977,6 +977,66 @@ impl TodoStorage for RusqliteStorage {
     Ok(())
   }
 
+  fn adjust_rank_between(
+    &self,
+    note_id: &NoteId,
+    after: Option<&NoteId>,
+    before: Option<&NoteId>,
+  ) -> ShizenResult<()> {
+    if after.is_none() && before.is_none() {
+      return Err(ShizenError::InvalidRankAdjustment);
+    }
+
+    let mut conn = self.conn.borrow_mut();
+    let mut txn = conn.transaction()?;
+
+    let after_rank: Option<ShizenResult<lexorank::LexoRank>> = after.and_then(|n| {
+      Some(
+        txn
+          .query_row(
+            "SELECT rank FROM Notes WHERE uuid = ?",
+            [n.0.to_string()],
+            |r: &Row| r.get::<_, String>(0),
+          )
+          .map(|s| lexorank::LexoRank::from_string(&s).unwrap())
+          .map_err(|e| e.into()),
+      )
+    });
+    let before_rank: Option<ShizenResult<lexorank::LexoRank>> = before.and_then(|n| {
+      Some(
+        txn
+          .query_row(
+            "SELECT rank FROM Notes WHERE uuid = ?",
+            [n.0.to_string()],
+            |r: &Row| r.get::<_, String>(0),
+          )
+          .map(|s| lexorank::LexoRank::from_string(&s).unwrap())
+          .map_err(|e| e.into()),
+      )
+    });
+
+    let (after_rank, before_rank) = (after_rank.transpose()?, before_rank.transpose()?);
+
+    let new_rank = match (after_rank, before_rank) {
+      (None, Some(r)) => r.prev(),
+      (Some(r), None) => r.next(),
+      (Some(a), Some(b)) => a.between(&b).unwrap(),
+      (None, None) => unreachable!(),
+    };
+
+    txn.execute(
+      "UPDATE Notes SET rank = ? WHERE uuid = ?",
+      (new_rank.to_string(), note_id.0.to_string()),
+    )?;
+
+    // TODO NOW undo/redo action
+    // test
+    // add to cli
+
+    txn.commit()?;
+    Ok(())
+  }
+
   fn undo(&self) -> ShizenResult<usize> {
     let mut conn = self.conn.borrow_mut();
     let txn = conn.transaction()?;

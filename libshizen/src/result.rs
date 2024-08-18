@@ -45,4 +45,6 @@ pub enum ShizenError {
   CannotBePeerOfSelf,
   #[error("Peer already exists: {}", .0.0.to_string())]
   PeerAlreadyExists(PeerId),
+  #[error("Invalid position, one input must be something")]
+  InvalidRankAdjustment,
 }
