@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use libshizen::entities::{Note, NoteId, PeerId, PeerInfo};
 use libshizen::storage::rusqlite::RusqliteStorage;
 use libshizen::storage::TodoStorage;
@@ -27,7 +27,7 @@ enum Commands {
   Create,
   Complete {
     note_id: Uuid,
-    #[arg(default_value_t = true)]
+    #[arg(action = ArgAction::Set)]
     completed: bool,
   },
   #[command(visible_alias = "ls")]

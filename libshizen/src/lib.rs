@@ -9,8 +9,8 @@ pub use sync::SyncServer;
 pub type DefaultStorage = storage::rusqlite::RusqliteStorage;
 
 // TODO list
-// * user defined ordering
 // * cli support for sort ordering
+// * There is a bug, whne doing anything not an undo/redo the redo table should be deleted.
 // * dioxus UI for desktop/tui
 // * tracing spans/benchmarks/profiling
 // * Work to run as systemd service server with cli.
