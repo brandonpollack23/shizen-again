@@ -4,30 +4,24 @@ import { updateNoteTitle, updateNoteDescription, deleteNote } from '../api';
 import { TrashIcon, PencilIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
 export function TaskDetail() {
-  // Get only what we need from the store
   const notes = useStore(state => state.notes);
   const selectedNoteId = useStore(state => state.selectedNoteId);
   
-  // Actions
   const updateNote = useStore(state => state.updateNote);
   const removeNote = useStore(state => state.deleteNote);
   const setSelectedNoteId = useStore(state => state.setSelectedNoteId);
   const setError = useStore(state => state.setError);
   
-  // Get selected note using our selector function
   const selectedNote = getSelectedNote({ notes, selectedNoteId });
   
-  // Local state for editing
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [descriptionValue, setDescriptionValue] = useState('');
   
-  // Refs for input focus
   const titleInputRef = useRef<HTMLInputElement>(null);
   const descriptionInputRef = useRef<HTMLTextAreaElement>(null);
   
-  // Update local state when selected note changes
   useEffect(() => {
     if (selectedNote) {
       setTitleValue(selectedNote.title);
@@ -35,7 +29,6 @@ export function TaskDetail() {
     }
   }, [selectedNote]);
   
-  // Focus inputs when editing starts
   useEffect(() => {
     if (isEditingTitle && titleInputRef.current) {
       titleInputRef.current.focus();
@@ -45,7 +38,6 @@ export function TaskDetail() {
     }
   }, [isEditingTitle, isEditingDescription]);
   
-  // Show empty state if no note is selected
   if (!selectedNote) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-4 text-gray-500 dark:text-gray-400">

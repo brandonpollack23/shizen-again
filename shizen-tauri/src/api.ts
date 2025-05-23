@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { Note, PeerInfo } from './types';
 
-// Helper to wrap invoke with try/catch
 async function invokeCommand(command: string, args?: Record<string, any>): Promise<any> {
   try {
     const result = await invoke(command, args);
@@ -12,7 +11,6 @@ async function invokeCommand(command: string, args?: Record<string, any>): Promi
   }
 }
 
-// Note APIs
 export async function fetchAllNotes(): Promise<Note[]> {
   return invokeCommand('load_all_notes');
 }
@@ -113,7 +111,6 @@ export async function reorderNote(
   });
 }
 
-// Sync APIs
 export async function fetchPeers(): Promise<PeerInfo[]> {
   return invokeCommand('get_peers');
 }
@@ -147,7 +144,6 @@ export async function startSyncServer(port: number): Promise<void> {
   return invokeCommand('start_sync_server', { port });
 }
 
-// Undo/Redo APIs
 export async function undo(): Promise<number> {
   return invokeCommand('undo');
 }

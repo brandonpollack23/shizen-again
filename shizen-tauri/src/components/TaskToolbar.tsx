@@ -8,24 +8,19 @@ interface TaskToolbarProps {
 }
 
 export function TaskToolbar({ onOpenFilter }: TaskToolbarProps) {
-  // Get actions from store
   const addNote = useStore(state => state.addNote);
   const setError = useStore(state => state.setError);
   const setIsLoading = useStore(state => state.setIsLoading);
   
-  // Local state
   const [isCreatingTask, setIsCreatingTask] = useState(false);
 
-  // Handle creating a new task
   const handleCreateTask = async () => {
     try {
       setIsCreatingTask(true);
       setIsLoading(true);
       
-      // Call backend
       const newNote = await createNote('New Task');
       
-      // Update store
       addNote(newNote);
     } catch (err) {
       console.error('Error creating task:', err);
@@ -36,10 +31,8 @@ export function TaskToolbar({ onOpenFilter }: TaskToolbarProps) {
     }
   };
 
-  // Handle undo
   const handleUndo = async () => {
     try {
-      // Call backend
       await undo();
       
       // Reload notes after undo
@@ -53,10 +46,8 @@ export function TaskToolbar({ onOpenFilter }: TaskToolbarProps) {
     }
   };
 
-  // Handle redo
   const handleRedo = async () => {
     try {
-      // Call backend
       await redo();
       
       // Reload notes after redo

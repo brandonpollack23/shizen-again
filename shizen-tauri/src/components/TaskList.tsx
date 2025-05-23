@@ -5,24 +5,20 @@ import { CheckCircleIcon as CheckCircleSolidIcon } from '@heroicons/react/24/sol
 import { setNoteCompleted, fetchAllNotes } from '../api';
 
 export function TaskList() {
-  // Get only what we need from the store
   const isLoading = useStore(state => state.isLoading);
   const error = useStore(state => state.error);
   const selectedNoteId = useStore(state => state.selectedNoteId);
   const notes = useStore(state => state.notes);
   const filter = useStore(state => state.filter);
   
-  // Actions
   const setSelectedNoteId = useStore(state => state.setSelectedNoteId);
   const updateNote = useStore(state => state.updateNote);
   const setError = useStore(state => state.setError);
   const setIsLoading = useStore(state => state.setIsLoading);
   const setNotes = useStore(state => state.setNotes);
   
-  // Get filtered notes - compute it with the data we have
   const filteredNotes = getFilteredNotes({ notes, filter });
   
-  // Load notes on component mount
   useEffect(() => {
     async function loadNotes() {
       try {
