@@ -13,8 +13,6 @@ interface NoteState {
   
   // Actions
   setNotes: (notes: Note[]) => void;
-  addNote: (note: Note) => void;
-  updateNote: (note: Note) => void;
   deleteNote: (noteId: string) => void;
   setSelectedNoteId: (noteId: string | null) => void;
   setFilter: (filter: Partial<NoteFilter>) => void;
@@ -42,16 +40,6 @@ export const useStore = create<NoteState>()((set) => ({
 
   // Actions
   setNotes: (notes) => set({ notes }),
-  
-  addNote: (note) => set((state) => ({
-    notes: [...state.notes, note],
-  })),
-  
-  updateNote: (updatedNote) => set((state) => ({
-    notes: state.notes.map((note) => 
-      note.id[0] === updatedNote.id[0] ? updatedNote : note
-    ),
-  })),
   
   deleteNote: (noteId) => set((state) => ({
     notes: state.notes.filter((note) => note.id[0] !== noteId),

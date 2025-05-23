@@ -1,16 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore, getSelectedNote } from '../store';
-import { updateNoteTitle, updateNoteDescription, deleteNote } from '../api';
+import { updateNoteTitle, updateNoteDescription, deleteNote, fetchAllNotes } from '../api';
 import { TrashIcon, PencilIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
 export function TaskDetail() {
   const notes = useStore(state => state.notes);
   const selectedNoteId = useStore(state => state.selectedNoteId);
   
-  const updateNote = useStore(state => state.updateNote);
   const removeNote = useStore(state => state.deleteNote);
   const setSelectedNoteId = useStore(state => state.setSelectedNoteId);
   const setError = useStore(state => state.setError);
+  const setNotes = useStore(state => state.setNotes);
   
   const selectedNote = getSelectedNote({ notes, selectedNoteId });
   
@@ -49,19 +49,17 @@ export function TaskDetail() {
   // Handle title save
   const handleTitleSave = async () => {
     try {
-      // Call backend
+      console.log('Updating title for note ID:', selectedNote.id[0], 'with title:', titleValue);
       await updateNoteTitle(selectedNote.id[0], titleValue);
       
-      // Update store
-      updateNote({
-        ...selectedNote,
-        title: titleValue,
-      });
+      const updatedNotes = await fetchAllNotes();
+      setNotes(updatedNotes);
       
-      // Exit edit mode
       setIsEditingTitle(false);
     } catch (err) {
       console.error('Error updating title:', err);
+      console.error('Note ID that failed:', selectedNote.id[0]);
+      console.error('Title value:', titleValue);
       setError(err instanceof Error ? err.message : 'Failed to update title');
     }
   };
@@ -69,16 +67,11 @@ export function TaskDetail() {
   // Handle description save
   const handleDescriptionSave = async () => {
     try {
-      // Call backend
       await updateNoteDescription(selectedNote.id[0], descriptionValue || undefined);
       
-      // Update store
-      updateNote({
-        ...selectedNote,
-        description: descriptionValue || null,
-      });
+      const updatedNotes = await fetchAllNotes();
+      setNotes(updatedNotes);
       
-      // Exit edit mode
       setIsEditingDescription(false);
     } catch (err) {
       console.error('Error updating description:', err);
@@ -90,11 +83,10 @@ export function TaskDetail() {
   const handleDeleteTask = async () => {
     if (confirm('Are you sure you want to delete this task?')) {
       try {
-        // Call backend
         await deleteNote(selectedNote.id[0]);
         
-        // Update store
-        removeNote(selectedNote.id[0]);
+        const updatedNotes = await fetchAllNotes();
+        setNotes(updatedNotes);
         setSelectedNoteId(null);
       } catch (err) {
         console.error('Error deleting task:', err);

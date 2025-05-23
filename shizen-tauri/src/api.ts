@@ -37,8 +37,9 @@ export async function updateNoteTitle(
   noteId: string, 
   title: string
 ): Promise<void> {
+  console.log('API: updateNoteTitle called with:', { note_id: noteId, title });
   return invokeCommand('update_title', { 
-    note_id: noteId, // Match Rust parameter name 
+    note_id: noteId, 
     title 
   });
 }

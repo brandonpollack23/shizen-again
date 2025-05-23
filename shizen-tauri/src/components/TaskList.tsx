@@ -12,7 +12,6 @@ export function TaskList() {
   const filter = useStore(state => state.filter);
   
   const setSelectedNoteId = useStore(state => state.setSelectedNoteId);
-  const updateNote = useStore(state => state.updateNote);
   const setError = useStore(state => state.setError);
   const setIsLoading = useStore(state => state.setIsLoading);
   const setNotes = useStore(state => state.setNotes);
@@ -36,26 +35,14 @@ export function TaskList() {
     loadNotes();
   }, [setNotes, setIsLoading, setError]);
   
-  // Handle toggling complete status
   const handleToggleComplete = async (noteId: string, completed: boolean, e: React.MouseEvent) => {
     e.stopPropagation();
     
     try {
-      // Call backend
       await setNoteCompleted(noteId, !completed);
       
-      // Find the note to update
-      const noteToUpdate = notes.find(note => note.id[0] === noteId);
-      if (noteToUpdate) {
-        // Create updated note
-        const updatedNote = {
-          ...noteToUpdate,
-          completed: !completed
-        };
-        
-        // Update store
-        updateNote(updatedNote);
-      }
+      const updatedNotes = await fetchAllNotes();
+      setNotes(updatedNotes);
     } catch (err) {
       console.error('Error toggling completion:', err);
       setError(err instanceof Error ? err.message : 'Failed to update note');

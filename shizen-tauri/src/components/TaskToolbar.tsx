@@ -8,7 +8,6 @@ interface TaskToolbarProps {
 }
 
 export function TaskToolbar({ onOpenFilter }: TaskToolbarProps) {
-  const addNote = useStore(state => state.addNote);
   const setError = useStore(state => state.setError);
   const setIsLoading = useStore(state => state.setIsLoading);
   
@@ -19,9 +18,10 @@ export function TaskToolbar({ onOpenFilter }: TaskToolbarProps) {
       setIsCreatingTask(true);
       setIsLoading(true);
       
-      const newNote = await createNote('New Task');
+      await createNote('New Task');
       
-      addNote(newNote);
+      const updatedNotes = await fetchAllNotes();
+      useStore.getState().setNotes(updatedNotes);
     } catch (err) {
       console.error('Error creating task:', err);
       setError(err instanceof Error ? err.message : 'Failed to create task');
