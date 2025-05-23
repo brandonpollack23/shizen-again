@@ -168,7 +168,7 @@ export function SyncSettings() {
                     <p className="text-xs text-gray-500 dark:text-gray-400">
                       ID: {peer.peer_id[0].substring(0, 8)}... • Clock: {peer.clock}
                     </p>
-                    {syncResult?.peerId === peer.peer_id[0] && (
+                    {syncResult?.peerId === peer.peer_id[0] && syncResult && (
                       <p className="text-xs text-green-600 dark:text-green-400 mt-1">
                         {syncResult.result}
                       </p>

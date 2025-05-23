@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../store';
 import { PlusIcon, FunnelIcon, ArrowUturnLeftIcon, ArrowUturnRightIcon } from '@heroicons/react/24/outline';
-import { createNote, undo, redo } from '../api';
+import { createNote, undo, redo, fetchAllNotes } from '../api';
 
 interface TaskToolbarProps {
   onOpenFilter: () => void;
@@ -43,7 +43,7 @@ export function TaskToolbar({ onOpenFilter }: TaskToolbarProps) {
       await undo();
       
       // Reload notes after undo
-      const notesData = await window.__TAURI__.invoke('load_all_notes');
+      const notesData = await fetchAllNotes();
       
       // Update store
       useStore.getState().setNotes(notesData);
@@ -60,7 +60,7 @@ export function TaskToolbar({ onOpenFilter }: TaskToolbarProps) {
       await redo();
       
       // Reload notes after redo
-      const notesData = await window.__TAURI__.invoke('load_all_notes');
+      const notesData = await fetchAllNotes();
       
       // Update store
       useStore.getState().setNotes(notesData);

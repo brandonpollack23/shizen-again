@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useStore, getFilteredNotes } from '../store';
 import { CheckCircleIcon, MinusCircleIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { CheckCircleIcon as CheckCircleSolidIcon } from '@heroicons/react/24/solid';
-import { setNoteCompleted } from '../api';
+import { setNoteCompleted, fetchAllNotes } from '../api';
 
 export function TaskList() {
   // Get only what we need from the store
@@ -27,7 +27,7 @@ export function TaskList() {
     async function loadNotes() {
       try {
         setIsLoading(true);
-        const response = await window.__TAURI__.invoke('load_all_notes');
+        const response = await fetchAllNotes();
         setNotes(response);
       } catch (err) {
         console.error('Error loading notes:', err);
