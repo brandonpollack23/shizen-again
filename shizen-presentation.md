@@ -1,7 +1,6 @@
 ---
 title: "Shizen: Local-First P2P Synced Todo Management"
 author: Brandon Pollack
-email: brandon@tokyorust.org
 ---
 
 # Shizen
@@ -23,11 +22,12 @@ _死前 (Shizen) - "Before (Your) Death" in Japanese_
 
 * [GitHub](https://github.com/brandonpollack23)
 * [LinkedIn](https://www.linkedin.com/in/brandon-pollack-58b61542/)
+* [Email](mailto:brandonpollack23@gmail.com)
 
 ## Bio
 
-Former developer at Google and Pulumi.  Worked on all manner of things from
-ChromeOS to distributed systems to Google Keep.
+Former software engineer at Microsoft, Google, and Pulumi.  Worked on all manner of things from
+Windows to ChromeOS to distributed systems to Google Keep.
 
 Currently a part time consultant based in Tokyo.
 
@@ -80,21 +80,64 @@ Your data lives on **your machines**
     you want!      No problem!
 ```
 
+**Benefits of local-first:**
+- **Offline-first:** Works without internet (airplane mode!)
+- **Performance:** No network latency for local operations
+- **Privacy:** Your data never leaves your machine (unless you sync)
+- **Ownership:** You control your data, backups, migrations
+- **Reliability:** No dependency on third-party servers
+- **Cost:** No cloud hosting fees
+
 **You own your data. You control the sync.**
 
 ---
 
 # Anti-Cloud Philosophy
 
-Why self-hosting matters:
+**Why avoid cloud services?**
 
-1. **Data sovereignty** - Your notes, your hardware, your rules
-2. **No surveillance capitalism** - Nobody mining your tasks for ad targeting
-3. **Permanent access** - Can't lose access due to account suspension/company bankruptcy
-4. **Customization freedom** - Modify the code, host how you want
-5. **Cost control** - One-time setup, no recurring fees
+💰 **Economic:** Subscription models extract recurring revenue
+  - $10/month × 10 years = $1,200 for TODO app!
+
+🔒 **Control:** Cloud providers can:
+  - Change pricing arbitrarily
+  - Shut down services (RIP Google Reader, etc.)
+  - Change features you depend on
+  - Lock you out of your account
+
+🕵️ **Privacy:** Your data on their servers means:
+  - Potential data breaches
+  - Government surveillance (PRISM, etc.)
+  - Data mining for ads/ML training
+
+**Self-hosting gives you back control!**
 
 **Shizen is designed to work WITHOUT any cloud service**
+
+---
+
+# Why Rust?
+
+Perfect language for this project:
+
+🛡️ **Memory Safety**
+- No null pointer dereferences
+- No use-after-free bugs
+- Thread safety guaranteed at compile time
+
+⚡ **Performance**
+- Zero-cost abstractions
+- No garbage collection pauses
+- C/C++ level performance
+
+🔧 **Tooling**
+- Cargo: best-in-class package manager
+- Clippy: helpful lints
+- rustfmt: automatic formatting
+
+🌐 **Cross-platform**
+- Compiles to native, WASM, embedded
+- Same code runs on Linux/Mac/Windows
 
 ---
 
@@ -142,11 +185,6 @@ storage.create_note(NoteId::new(), "Deploy to prod".into(), None);
 - Web frontend (WASM)
 - Mobile app (via Rust FFI)
 
-**Option 3: Direct database access**
-- SQLite is just a file - query it yourself!
-- Use SQL directly if you prefer
-- Integrate with existing tools
-
 **The power of separation: libshizen doesn't care how you use it!**
 
 ---
@@ -171,26 +209,6 @@ Each peer:
 - Can sync with any other peer directly
 - Works 100% offline
 - Syncs whenever you want
-
----
-
-# Tech Stack
-
-**Language:** Rust (Edition 2021)
-
-**Core Dependencies:**
-- `rusqlite` - SQLite with WAL mode (bundled, WASM-ready)
-- `serde` + `serde_json` - Serialization
-- `uuid` - UUID v4 generation (fast-rng)
-- `lexorank` - Fractional indexing for ordering
-- `thiserror` - Ergonomic error handling
-- `tracing` - Structured logging
-
-**Why Rust?**
-- Memory safety without garbage collection
-- Zero-cost abstractions
-- Fearless concurrency
-- Excellent tooling (cargo, clippy, rustfmt)
 
 ---
 
@@ -224,11 +242,6 @@ Each peer:
 ┌─────────────────────────────────────────────────────┐
 │                 SQLite Database                      │
 │              (WAL mode, ~/shizen.db)                 │
-└─────────────────────────────────────────────────────┘
-                         ▼
-┌─────────────────────────────────────────────────────┐
-│              Network Layer (TCP)                     │
-│   Peer Discovery & Sync (JSON-over-TCP Protocol)    │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -275,18 +288,21 @@ Notes form both a **tree** AND a **directed acyclic graph**:
    Dependency relationships (separate from hierarchy):
 
    Task B1 blocks──┐
+                   |
+   Task C1 blocks  |
                    ▼
-   Task A2 ────→ [Cannot complete until B1 done]
+   Task A2 ────→ [Cannot complete (optionally even show) until C1 and B1 done]
 ```
 
 This lets you model:
 - Projects with sub-tasks (hierarchy)
-- Task dependencies (DAG)
-- Blockers across different branches
+- Task dependencies (DAG), e.g. You need to get your driver's license
+  translated by JAF and get a Residence certificate from the ward office before
+  you can transfer your drivers license.
 
 ---
 
-# Actions: Operation-Based Replication
+# Actions: Operation-Based Replication and Logging/History
 
 Every mutation is an `Action` enum:
 
@@ -333,7 +349,6 @@ pub trait TodoStorage {
 **Benefits:**
 - Swap storage backends (SQLite, Postgres, in-memory)
 - Easy testing with mock implementations
-- Clear separation of concerns
 
 ---
 
@@ -377,6 +392,126 @@ PRAGMA foreign_keys = ON;         -- Referential integrity
 
 ---
 
+# RusqliteStorage: Implementation
+
+Key implementation details:
+
+**Transaction-based operations:**
+```rust
+// Every mutation runs in a transaction
+let tx = self.conn.transaction()?;
+// ... do work ...
+tx.commit()?;
+```
+
+**Recursive CTEs for hierarchical queries:**
+```sql
+WITH RECURSIVE descendants AS (
+    SELECT uuid FROM Notes WHERE uuid = ?
+    UNION ALL
+    SELECT c.child FROM Children c
+    JOIN descendants d ON c.parent = d.uuid
+)
+SELECT * FROM Notes WHERE uuid IN descendants;
+```
+
+**Comprehensive error handling with `thiserror`:**
+```rust
+#[derive(Error, Debug)]
+pub enum ShizenError {
+    #[error("Database error: {0}")]
+    DatabaseError(String),
+    #[error("Note not found: {0}")]
+    NoteNotFound(NoteId),
+    // ... etc
+}
+```
+
+---
+
+# Hierarchical Queries: Recursive CTEs
+
+**Finding all descendants of a note:**
+
+```sql
+WITH RECURSIVE descendants AS (
+    SELECT uuid FROM Notes WHERE uuid = ?
+    UNION ALL
+    SELECT c.child
+    FROM Children c
+    JOIN descendants d ON c.parent = d.uuid
+)
+DELETE FROM Notes WHERE uuid IN descendants;
+```
+
+**Why recursive CTEs?**
+- Handles arbitrary depth hierarchies
+- Single SQL query (efficient!)
+- Database does the heavy lifting
+
+**Used for:**
+- Deleting notes (cascading to descendants)
+- Finding all children/grandchildren
+- Tree traversals
+
+---
+
+# Dependency Graph: DAG Enforcement
+
+**Dependencies table:**
+```sql
+CREATE TABLE Dependencies (
+    blocker TEXT NOT NULL,
+    blockee TEXT NOT NULL,
+    FOREIGN KEY (blocker) REFERENCES Notes(uuid) ON DELETE CASCADE,
+    FOREIGN KEY (blockee) REFERENCES Notes(uuid) ON DELETE CASCADE
+);
+```
+
+**TODO:** Cycle detection to ensure DAG property!
+
+```rust
+// Should prevent:
+add_dependency(A, B)  // A blocks B
+add_dependency(B, C)  // B blocks C
+add_dependency(C, A)  // C blocks A → CYCLE!
+```
+
+**Current:** No cycle prevention (you can create cycles!)
+**Future:** Topological sort validation before adding dependency
+
+---
+
+# Error Handling: ShizenError
+
+Using `thiserror` for ergonomic errors:
+
+```rust
+#[derive(Error, Debug)]
+pub enum ShizenError {
+    #[error("Database error: {0}")]
+    DatabaseError(String),
+
+    #[error("Note not found: {0}")]
+    NoteNotFound(NoteId),
+
+    #[error("Cannot add self as parent")]
+    SelfParentError,
+
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+}
+
+pub type ShizenResult<T> = Result<T, ShizenError>;
+```
+
+**Benefits:** Clear error messages, `?` operator works beautifully
+
+---
+
 # LexoRank: Fractional Indexing
 
 Problem: How to maintain user-defined order without reordering everything?
@@ -394,6 +529,19 @@ Notes have rank: "a", "b", "d", "h", "p"
 User moves "p" between "b" and "d"
 → New rank: "c" (lexicographically between "b" and "d")
 → Only 1 UPDATE!
+```
+
+**When single letters aren't enough:**
+```
+Notes have rank: "a", "b", "c", "d"
+User inserts between "b" and "c"
+→ New rank: "bb" (lexicographically: "b" < "bb" < "c")
+
+User inserts again between "b" and "bb"
+→ New rank: "bU" (midpoint: "b" < "bU" < "bb")
+
+Infinite precision! You can ALWAYS find a string between any two strings.
+"b" < "ba" < "baa" < "baaa" < ... < "bb"
 ```
 
 **Benefits:**
@@ -451,6 +599,12 @@ Message Format:
 - Reliable delivery (we need ordered actions)
 - Built-in flow control
 - Simple, battle-tested
+
+**Why not MessagePack/JSON?**
+- MessagePack is not a wire protocol
+- I wanted to try implementing my own wire protocol
+- I figured prepending lengths was safer than expecting well formed json
+- I'm probably dumb
 
 ---
 
@@ -578,161 +732,7 @@ Result: A has all changes in causal order!
 
 **Note:** This is "last-write-wins" for now (local changes win after rebase)
 
----
-
-# Conflict Resolution (Current)
-
-**Current approach:** "Last-write-wins" (local bias)
-
-When both peers edit the same note:
-```
-Peer A: UpdateTitle(note1, "Fix bug")    [clock=11]
-Peer B: UpdateTitle(note1, "New feature") [clock=11]
-```
-
-After A syncs with B:
-```
-1. A undoes local change
-2. A applies B's change → note1.title = "New feature"
-3. A reapplies own change → note1.title = "Fix bug"
-```
-
-**Result:** A's change wins (because it's reapplied last)
-
-**TODO:** Better conflict detection and resolution!
-
----
-
-# Future Conflict Handling
-
-**Planned improvements:**
-
-1. **Detect conflicts:** Track which note properties changed
-2. **Merge strategies:**
-   - Last-write-wins for simple fields
-   - Three-way merge for descriptions (like git)
-   - User prompt for irreconcilable conflicts
-3. **Conflict markers:**
-   ```
-   <<<<<<< Your version
-   Fix authentication bug
-   =======
-   Add new login feature
-   >>>>>>> Peer B's version
-   ```
-4. **Vector clocks** instead of Lamport clocks (better causality)
-
----
-
-# CRDT-Inspired Design
-
-**Not a full CRDT, but inspired by CRDT principles:**
-
-✅ **What Shizen borrows from CRDTs:**
-- Operation-based replication (Op-based CRDT)
-- Causal ordering (Lamport clocks)
-- Commutative operations (most actions commute)
-- Eventual consistency goal
-
-❌ **What Shizen doesn't have (yet):**
-- True commutativity for all operations
-- Automatic conflict-free merges
-- Vector clocks for full causality tracking
-
-**Philosophy:** "Eventually consistent is eventually correct... eventually!" 😅
-
----
-
-# Network Protocol Details
-
-**SyncRequest** enum (from `libshizen/src/sync.rs`):
-```rust
-enum SyncRequest {
-    PeerIdentificationHandshake {
-        local_peer_id: PeerId,
-        local_server_address: Option<SocketAddr>,
-    },
-    Sync {
-        local_peer_id: PeerId,
-        last_sync_clock: usize,
-    },
-}
-```
-
-**SyncResponse** enum:
-```rust
-enum SyncResponse {
-    PeerIdentificationHandshakeResponse(PeerId),
-    SyncResponse {
-        clock: usize,
-        changes: Vec<Action>
-    },
-}
-```
-
-All serialized via `serde_json`, framed with length-prefix
-
----
-
-# Storage Trait: Abstract Interface
-
-Design philosophy: **Program to interfaces, not implementations**
-
-```rust
-// libshizen/src/storage.rs
-pub trait TodoStorage {
-    fn create_note(&mut self, id: NoteId, title: String,
-                   description: Option<String>) -> ShizenResult<()>;
-    fn get_note(&self, id: NoteId) -> ShizenResult<Note>;
-    fn all_notes(&self) -> ShizenResult<Vec<Note>>;
-    fn set_parent(&mut self, child_id: NoteId,
-                  parent_id: Option<NoteId>) -> ShizenResult<()>;
-    fn add_dependency(&mut self, blocker: NoteId,
-                      blockee: NoteId) -> ShizenResult<()>;
-    fn undo(&mut self) -> ShizenResult<()>;
-    fn redo(&mut self) -> ShizenResult<()>;
-    // ... 20+ methods
-}
-```
-
-**Benefits:** Swap SQLite for Postgres, in-memory, cloud, etc!
-
----
-
-# RusqliteStorage: Implementation
-
-Key implementation details:
-
-**Transaction-based operations:**
-```rust
-// Every mutation runs in a transaction
-let tx = self.conn.transaction()?;
-// ... do work ...
-tx.commit()?;
-```
-
-**Recursive CTEs for hierarchical queries:**
-```sql
-WITH RECURSIVE descendants AS (
-    SELECT uuid FROM Notes WHERE uuid = ?
-    UNION ALL
-    SELECT c.child FROM Children c
-    JOIN descendants d ON c.parent = d.uuid
-)
-SELECT * FROM Notes WHERE uuid IN descendants;
-```
-
-**Comprehensive error handling with `thiserror`:**
-```rust
-#[derive(Error, Debug)]
-pub enum ShizenError {
-    #[error("Database error: {0}")]
-    DatabaseError(String),
-    #[error("Note not found: {0}")]
-    NoteNotFound(NoteId),
-    // ... etc
-}
-```
+This is ***A lot*** like git rebase.
 
 ---
 
@@ -797,179 +797,59 @@ impl SyncConnection {
 
 ---
 
-# Hierarchical Queries: Recursive CTEs
+# Conflict Resolution (Current)
 
-**Finding all descendants of a note:**
+**Current approach:** "Last-write-wins" (local bias)
 
-```sql
-WITH RECURSIVE descendants AS (
-    SELECT uuid FROM Notes WHERE uuid = ?
-    UNION ALL
-    SELECT c.child
-    FROM Children c
-    JOIN descendants d ON c.parent = d.uuid
-)
-DELETE FROM Notes WHERE uuid IN descendants;
+When both peers edit the same note:
+```
+Peer A: UpdateTitle(note1, "Fix bug")    [clock=11]
+Peer B: UpdateTitle(note1, "New feature") [clock=11]
 ```
 
-**Why recursive CTEs?**
-- Handles arbitrary depth hierarchies
-- Single SQL query (efficient!)
-- Database does the heavy lifting
-
-**Used for:**
-- Deleting notes (cascading to descendants)
-- Finding all children/grandchildren
-- Tree traversals
-
----
-
-# Dependency Graph: DAG Enforcement
-
-**Dependencies table:**
-```sql
-CREATE TABLE Dependencies (
-    blocker TEXT NOT NULL,
-    blockee TEXT NOT NULL,
-    FOREIGN KEY (blocker) REFERENCES Notes(uuid) ON DELETE CASCADE,
-    FOREIGN KEY (blockee) REFERENCES Notes(uuid) ON DELETE CASCADE
-);
+After A syncs with B:
+```
+1. A undoes local change
+2. A applies B's change → note1.title = "New feature"
+3. A reapplies own change → note1.title = "Fix bug"
 ```
 
-**TODO:** Cycle detection to ensure DAG property!
+**Result:** A's change wins (because it's reapplied last)
 
-```rust
-// Should prevent:
-add_dependency(A, B)  // A blocks B
-add_dependency(B, C)  // B blocks C
-add_dependency(C, A)  // C blocks A → CYCLE!
-```
-
-**Current:** No cycle prevention (you can create cycles!)
-**Future:** Topological sort validation before adding dependency
+**TODO:** Better conflict detection and resolution!
 
 ---
 
-# Error Handling: ShizenError
+# CRDT-Inspired Design
 
-Using `thiserror` for ergonomic errors:
+**Not a full CRDT, but inspired by CRDT principles:**
 
-```rust
-#[derive(Error, Debug)]
-pub enum ShizenError {
-    #[error("Database error: {0}")]
-    DatabaseError(String),
+✅ **What Shizen borrows from CRDTs:**
+- Operation-based replication (Op-based CRDT)
+- Causal ordering (Lamport clocks)
+- Commutative operations (most actions commute)
+- Eventual consistency goal
 
-    #[error("Note not found: {0}")]
-    NoteNotFound(NoteId),
+❌ **What Shizen doesn't have (yet):**
+- True commutativity for all operations
+- Automatic conflict-free merges
+- Vector clocks for full causality tracking
 
-    #[error("Cannot add self as parent")]
-    SelfParentError,
-
-    #[error("Network error: {0}")]
-    NetworkError(String),
-
-    #[error("Serialization error: {0}")]
-    SerializationError(String),
-}
-
-pub type ShizenResult<T> = Result<T, ShizenError>;
-```
-
-**Benefits:** Clear error messages, `?` operator works beautifully
+**Philosophy:** "Eventually consistent is eventually correct... eventually!" 😅
 
 ---
 
-# Current Usage: Library-Only
+# Future Conflict Handling
 
-**Shizen is currently a library** (not a standalone app)
+**Planned improvements:**
 
-**Integration example:**
-```rust
-use libshizen::{RusqliteStorage, TodoStorage, NoteId};
-
-fn main() {
-    let mut storage = RusqliteStorage::new("~/todos.db").unwrap();
-
-    let id = NoteId::new();
-    storage.create_note(id, "Build shizen".into(), None).unwrap();
-    storage.set_completed(id, true).unwrap();
-
-    let notes = storage.all_notes().unwrap();
-    for note in notes {
-        println!("{}: {}", note.id, note.title);
-    }
-}
-```
-
-**CLI exists but is minimal** (basic CRUD only)
-
----
-
-# Why Rust?
-
-Perfect language for this project:
-
-🛡️ **Memory Safety**
-- No null pointer dereferences
-- No use-after-free bugs
-- Thread safety guaranteed at compile time
-
-⚡ **Performance**
-- Zero-cost abstractions
-- No garbage collection pauses
-- C/C++ level performance
-
-🔧 **Tooling**
-- Cargo: best-in-class package manager
-- Clippy: helpful lints
-- rustfmt: automatic formatting
-
-🌐 **Cross-platform**
-- Compiles to native, WASM, embedded
-- Same code runs on Linux/Mac/Windows
-
----
-
-# Why Local-First?
-
-**Benefits of local-first architecture:**
-
-1. **Offline-first:** Works without internet (airplane mode!)
-2. **Performance:** No network latency for local operations
-3. **Privacy:** Your data never leaves your machine (unless you sync)
-4. **Ownership:** You control your data, backups, migrations
-5. **Reliability:** No dependency on third-party servers
-6. **Cost:** No cloud hosting fees
-
-**Trade-offs:**
-- More complex sync (vs simple client-server)
-- Users manage their own backups
-- No "one source of truth" (eventual consistency)
-
-**Shizen's philosophy:** These trade-offs are worth it!
-
----
-
-# Anti-Cloud Philosophy
-
-**Why avoid cloud services?**
-
-💰 **Economic:** Subscription models extract recurring revenue
-  - $10/month × 10 years = $1,200 for TODO app!
-
-🔒 **Control:** Cloud providers can:
-  - Change pricing arbitrarily
-  - Shut down services (RIP Google Reader, etc.)
-  - Change features you depend on
-  - Lock you out of your account
-
-🕵️ **Privacy:** Your data on their servers means:
-  - Potential data breaches
-  - Government surveillance (PRISM, etc.)
-  - Data mining for ads/ML training
-
-**Self-hosting gives you back control!**
+1. **Detect conflicts:** Track which note properties changed
+1. **Merge strategies:**
+   - Last-write-wins for simple fields
+   - Three-way merge for descriptions (like git)
+   - User prompt for irreconcilable conflicts
+1. **Conflict markers:**
+1. **Vector clocks** instead of Lamport clocks (better causality)
 
 ---
 
@@ -1079,6 +959,32 @@ From the codebase:
 
 ---
 
+# Current Usage: Library-Only
+
+**Shizen is currently a library** (not a standalone app)
+
+**Integration example:**
+```rust
+use libshizen::{RusqliteStorage, TodoStorage, NoteId};
+
+fn main() {
+    let mut storage = RusqliteStorage::new("~/todos.db").unwrap();
+
+    let id = NoteId::new();
+    storage.create_note(id, "Build shizen".into(), None).unwrap();
+    storage.set_completed(id, true).unwrap();
+
+    let notes = storage.all_notes().unwrap();
+    for note in notes {
+        println!("{}: {}", note.id, note.title);
+    }
+}
+```
+
+**CLI exists but is minimal** (basic CRUD only)
+
+---
+
 # Getting Started
 
 **Prerequisites:**
@@ -1096,64 +1002,9 @@ cargo test -p libshizen
 **Use in your project:**
 ```toml
 [dependencies]
-libshizen = { path = "../shizen/libshizen" }
-# Or from crates.io (once published):
-# libshizen = "0.1.0"
-```
+libshizen = { git = "https://github.com/brandonpollack23/shizen", commit = "..." }
 
-<!-- TODO: Add link to documentation, examples -->
-
----
-
-# "Eventually Consistent"
-
-![A meme about distributed systems]
-
-<!-- TODO: Add funny image about sync conflicts or distributed systems -->
-
-**P2P sync: Because eventually consistent is eventually correct... eventually! 🤞**
-
-```
-Peer A: "I think task is done!"
-Peer B: "I think task is not done!"
-[Sync happens]
-Result: ???
-```
-
-_(Insert obligatory "There are two hard things in computer science: cache invalidation, naming things, and off-by-one errors" joke)_
-
----
-
-# The Borrow Checker Approves ✅
-
-![Ferris the Crab (Rust mascot) giving a thumbs up]
-
-<!-- TODO: Add Ferris image from https://rustacean.net/ -->
-
-**Rust compiler:** "Your sync code is thread-safe!"
-**Me:** "But is it deadlock-free?"
-**Rust compiler:** "That's your problem 😅"
-
-**Fun fact:** Shizen compiles without warnings (thanks Clippy!)
-
----
-
-# Contributing
-
-**Shizen is open source!**
-
-- **License:** Apache 2.0
-- **Repo:** <!-- TODO: Add GitHub URL -->
-- **Issues:** <!-- TODO: Add issues URL -->
-
-**Areas for contribution:**
-- UI development (Tauri, Ratatui, egui)
-- Sync protocol improvements
-- Testing & bug fixes
-- Documentation
-- Performance optimization
-
-**First-time contributors welcome!**
+not on crates.io yet
 
 ---
 
@@ -1175,11 +1026,30 @@ _(Insert obligatory "There are two hard things in computer science: cache invali
 
 ---
 
+# Contributing
+
+**Shizen is open source!**
+
+- **Repo:** github.com/brandonpollack23/shizen
+
+**Areas for contribution:**
+- UI development such as a GUI, TUI (Ratatui?), etc.
+- More backends
+- web version? (Good luck getting sqlite to run in browser in a way that meshes
+  well).
+- Testing & bug fixes
+- Documentation
+
+**First-time contributors welcome!**
+
+---
+
 # Summary
 
 **Shizen** = Local-first P2P hierarchical todo management
 
-**Key innovations:**
+**Key Takeaways:**
+- ✅ Dependency based tasks
 - ✅ No central server (true P2P)
 - ✅ Operation-based replication (action log)
 - ✅ Lamport clocks (distributed ordering)
@@ -1187,9 +1057,7 @@ _(Insert obligatory "There are two hard things in computer science: cache invali
 - ✅ Perfect undo/redo (mutation history)
 - ✅ Rust safety + performance
 
-**Status:** Library-complete, UIs TODO
-
-**Philosophy:** Own your data, control your tools, resist the cloud!
+**Status:** Library-complete, CLI working, other UIs TODO
 
 ---
 
@@ -1201,13 +1069,53 @@ _(Insert obligatory "There are two hard things in computer science: cache invali
 
 # Thank You!
 
-**Shizen:** 自然 (Natural)
+Please reach out on LinkedIn or Email for hiring/consulting work or if you'd
+just like to connect.
 
-Making self-hosted, local-first todo management natural!
+LinkedIn:
 
-<!-- TODO: Add QR code to GitHub repo -->
-<!-- TODO: Add contact info -->
+█████████████████████████████████████
+█████████████████████████████████████
+████ ▄▄▄▄▄ █▀▀ █▄█▄▀  ▄▄ █ ▄▄▄▄▄ ████
+████ █   █ █▀██ ▀▀▀▄▄▀█▄██ █   █ ████
+████ █▄▄▄█ █▀▄██▄ ▀▀█▄▄▄▄█ █▄▄▄█ ████
+████▄▄▄▄▄▄▄█▄▀▄█ █ █ █▄▀ █▄▄▄▄▄▄▄████
+████▄▄▄▄▄▀▄▄  ▀▀▀ ▄█▀   █ ▀ ▀▄█▄▀████
+████ █▀▄▄█▄▀▄ ▄█ █▄▄ ▄█▀▀▀▄▀█▀█▀█████
+████   ▄▀▄▄██▄█▀  ▄█▀ ▀ ▀▀▀█▀▄▄█▀████
+████ ▀▄▄▄ ▄  ▀█▀ █▄ ▀█▄█▄▄▄ ▀▄▄▀█████
+████ █▄▀▄▄▄▄▄██▀▄▄▄▄▀ ▀ ▀▀▀ ▀▄ █▀████
+████ █▀ █▄▄▄▀▄██ █▀▄▀▄▀█▀▀  ▀█▄▀█████
+████▄█▄▄▄▄▄▄  ▀ ▀▄▄█▀  █ ▄▄▄ ▀   ████
+████ ▄▄▄▄▄ █▄▀ ██▄▀ ▄▄█  █▄█ ▄▄█▀████
+████ █   █ █  ▀▀▀ ▄▄▀▄▀▀▄▄▄ ▄▀ ▀ ████
+████ █▄▄▄█ █ █ ██▄▀▄█▄ ▄▀   ▄ ▄ █████
+████▄▄▄▄▄▄▄█▄█▄▄▄▄█▄▄▄█▄██▄▄▄▄▄██████
+█████████████████████████████████████
+█████████████████████████████████████
 
-**Keep your data local, sync on your terms** 🦀
+Email:
+
+█████████████████████████████████████
+█████████████████████████████████████
+████ ▄▄▄▄▄ █ ▄▄ █▄▄ █ ██▄█ ▄▄▄▄▄ ████
+████ █   █ ██▄█▀▀▄█▀▀▄▀█ █ █   █ ████
+████ █▄▄▄█ █ ▀▀▄ ▀▀▄ ▄▄█ █ █▄▄▄█ ████
+████▄▄▄▄▄▄▄█ ▀▄█▄▀▄█▄█▄▀▄█▄▄▄▄▄▄▄████
+████▄▄ ▀▀ ▄▀ ▄█▄ ▄█▄ ██▀ ▄  ▄▀▀▄ ████
+█████▀▄▀▀▄▄▀▀▄ ▀ ▄ ▀ █▀ █▀▀ ▄ ▄▀▄████
+████ █▄ █ ▄█▄  ██  █▄▀█  █  █▀█▄▀████
+████  ▀ █▄▄█▀█ ▄█▀█▄▀▄▀▄██▀ ▀ ▄▀▄████
+████▄ ▄  ▀▄ █ █▄ ▄█▀ ██  ▀  █ ▀▄ ████
+████▄▄█ ▀▄▄ █▄▀▀ ▄  ▀▄ ▄ ▄▄█▄██▀▄████
+████▄▄▄▄▄▄▄█ ▀███  ▀ ▀██ ▄▄▄ █▀█▀████
+████ ▄▄▄▄▄ █▀▀▀▄█▀█ █▄ ▀ █▄█  █▀▄████
+████ █   █ ██▄ ▄ ▄█  ▀█▄▄ ▄▄ ▄█▄ ████
+████ █▄▄▄█ █ █▄▀ ▄   ▄██▀ ▀█  █▄▄████
+████▄▄▄▄▄▄▄█▄▄███▄▄█▄█▄█▄██▄▄███▄████
+█████████████████████████████████████
+█████████████████████████████████████
+
+Please consider sponsoring TokyoRust.org!
 
 ---
