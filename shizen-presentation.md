@@ -9,7 +9,7 @@ author: Brandon Pollack
 _自然 (Shizen) - "Natural" in Japanese_
 _死前 (Shizen) - "Before (Your) Death" in Japanese_
 
----
+<!-- end_slide -->
 
 # About Me
 
@@ -31,7 +31,7 @@ Windows to ChromeOS to distributed systems to Google Keep.
 
 Currently a part time consultant based in Tokyo.
 
----
+<!-- end_slide -->
 
 # What is Shizen?
 
@@ -47,7 +47,7 @@ Key features:
 - Full undo/redo with complete mutation history
 - Custom ordering via LexoRank algorithm
 
----
+<!-- end_slide -->
 
 # The Problem
 
@@ -60,7 +60,7 @@ Modern todo apps have issues:
 - 💸 **Subscription fatigue** - Monthly fees for basic features
 - 🚫 **Service shutdown risk** - What happens when the startup fails?
 
----
+<!-- end_slide -->
 
 # The Solution: Local-First
 
@@ -90,7 +90,7 @@ Your data lives on **your machines**
 
 **You own your data. You control the sync.**
 
----
+<!-- end_slide -->
 
 # Anti-Cloud Philosophy
 
@@ -114,7 +114,7 @@ Your data lives on **your machines**
 
 **Shizen is designed to work WITHOUT any cloud service**
 
----
+<!-- end_slide -->
 
 # Why Rust?
 
@@ -139,7 +139,7 @@ Perfect language for this project:
 - Compiles to native, WASM, embedded
 - Same code runs on Linux/Mac/Windows
 
----
+<!-- end_slide -->
 
 # Directory Structure
 
@@ -164,7 +164,7 @@ shizen/
 
 **Currently:** libshizen is the focus (library-only)
 
----
+<!-- end_slide -->
 
 # libshizen: A Reusable Core
 
@@ -187,7 +187,7 @@ storage.create_note(NoteId::new(), "Deploy to prod".into(), None);
 
 **The power of separation: libshizen doesn't care how you use it!**
 
----
+<!-- end_slide -->
 
 # P2P Architecture Overview
 
@@ -210,7 +210,7 @@ Each peer:
 - Works 100% offline
 - Syncs whenever you want
 
----
+<!-- end_slide -->
 
 # Architecture Layers
 
@@ -245,7 +245,7 @@ Each peer:
 └─────────────────────────────────────────────────────┘
 ```
 
----
+<!-- end_slide -->
 
 # Data Model: The Note Entity
 
@@ -268,7 +268,7 @@ pub struct Note {
 1. **Hierarchical** (parent/child) - Tree structure
 2. **Dependencies** (blocker/blockee) - DAG structure
 
----
+<!-- end_slide -->
 
 # Hierarchical + DAG Structure
 
@@ -300,7 +300,7 @@ This lets you model:
   translated by JAF and get a Residence certificate from the ward office before
   you can transfer your drivers license.
 
----
+<!-- end_slide -->
 
 # Actions: Operation-Based Replication and Logging/History
 
@@ -325,7 +325,7 @@ pub enum Action {
 - Sync protocol (send actions, not state)
 - Audit log (what changed when)
 
----
+<!-- end_slide -->
 
 # Storage Layer: Trait Abstraction
 
@@ -350,7 +350,7 @@ pub trait TodoStorage {
 - Swap storage backends (SQLite, Postgres, in-memory)
 - Easy testing with mock implementations
 
----
+<!-- end_slide -->
 
 # SQLite Schema: Tables
 
@@ -369,7 +369,7 @@ From `libshizen/sql/sqlite/init.sql`:
 **Views:**
 - `FullyQualifiedNotes` - Denormalized join of all relationships, ordered by rank
 
----
+<!-- end_slide -->
 
 # SQLite Configuration
 
@@ -390,7 +390,7 @@ PRAGMA foreign_keys = ON;         -- Referential integrity
 - Can't have dependencies to non-existent notes
 - Cascade deletes handled correctly
 
----
+<!-- end_slide -->
 
 # RusqliteStorage: Implementation
 
@@ -427,7 +427,7 @@ pub enum ShizenError {
 }
 ```
 
----
+<!-- end_slide -->
 
 # Hierarchical Queries: Recursive CTEs
 
@@ -454,7 +454,7 @@ DELETE FROM Notes WHERE uuid IN descendants;
 - Finding all children/grandchildren
 - Tree traversals
 
----
+<!-- end_slide -->
 
 # Dependency Graph: DAG Enforcement
 
@@ -480,7 +480,7 @@ add_dependency(C, A)  // C blocks A → CYCLE!
 **Current:** No cycle prevention (you can create cycles!)
 **Future:** Topological sort validation before adding dependency
 
----
+<!-- end_slide -->
 
 # Error Handling: ShizenError
 
@@ -510,7 +510,7 @@ pub type ShizenResult<T> = Result<T, ShizenError>;
 
 **Benefits:** Clear error messages, `?` operator works beautifully
 
----
+<!-- end_slide -->
 
 # LexoRank: Fractional Indexing
 
@@ -549,7 +549,7 @@ Infinite precision! You can ALWAYS find a string between any two strings.
 - Works great with distributed systems (no position conflicts)
 - Infinite precision (can always find a value in between)
 
----
+<!-- end_slide -->
 
 # Undo/Redo: Time Travel
 
@@ -576,7 +576,7 @@ CREATE TABLE Mutations (
 
 **Result:** Perfect undo/redo with full history!
 
----
+<!-- end_slide -->
 
 # P2P Sync: Protocol Overview
 
@@ -606,7 +606,7 @@ Message Format:
 - I figured prepending lengths was safer than expecting well formed json
 - I'm probably dumb
 
----
+<!-- end_slide -->
 
 # Lamport Clocks: Logical Time
 
@@ -632,7 +632,7 @@ After sync:
   (B's clock becomes max(1,2)+1 = 3)
 ```
 
----
+<!-- end_slide -->
 
 # Sync Handshake Phase
 
@@ -658,7 +658,7 @@ Client                              Server
 
 After handshake, peers can sync data!
 
----
+<!-- end_slide -->
 
 # Sync Request/Response
 
@@ -686,7 +686,7 @@ Client                              Server
 
 Client receives all actions since last sync!
 
----
+<!-- end_slide -->
 
 # The Sync Dance: Algorithm
 
@@ -708,7 +708,7 @@ Step 6: Update peer's last_sync_clock in local DB
 
 From `libshizen/src/sync.rs:113-146`
 
----
+<!-- end_slide -->
 
 # Sync Dance Visualization
 
@@ -734,7 +734,7 @@ Result: A has all changes in causal order!
 
 This is ***A lot*** like git rebase.
 
----
+<!-- end_slide -->
 
 # SyncServer: Background Thread
 
@@ -765,7 +765,7 @@ impl SyncServer {
 
 **Graceful shutdown:** Channel-based signaling, thread join
 
----
+<!-- end_slide -->
 
 # SyncConnection: Client-Side
 
@@ -795,7 +795,7 @@ impl SyncConnection {
 }
 ```
 
----
+<!-- end_slide -->
 
 # Conflict Resolution (Current)
 
@@ -818,7 +818,7 @@ After A syncs with B:
 
 **TODO:** Better conflict detection and resolution!
 
----
+<!-- end_slide -->
 
 # CRDT-Inspired Design
 
@@ -837,7 +837,7 @@ After A syncs with B:
 
 **Philosophy:** "Eventually consistent is eventually correct... eventually!" 😅
 
----
+<!-- end_slide -->
 
 # Future Conflict Handling
 
@@ -851,7 +851,7 @@ After A syncs with B:
 1. **Conflict markers:**
 1. **Vector clocks** instead of Lamport clocks (better causality)
 
----
+<!-- end_slide -->
 
 # Future Work: UI Development
 
@@ -876,7 +876,7 @@ After A syncs with B:
 
 **Goal:** Multiple UIs, one libshizen core!
 
----
+<!-- end_slide -->
 
 # Future Work: Sync Improvements
 
@@ -897,7 +897,7 @@ After A syncs with B:
 - Better causality tracking than Lamport clocks
 - Can detect concurrent vs. sequential updates
 
----
+<!-- end_slide -->
 
 # Future Work: Web Port (WASM)
 
@@ -916,7 +916,7 @@ After A syncs with B:
 
 **Already prepared:** `rusqlite` dependency has `wasm32-wasi-vfs` feature flag!
 
----
+<!-- end_slide -->
 
 # Future Work: Systemd Service
 
@@ -941,7 +941,7 @@ WantedBy=multi-user.target
 - Other devices sync to this "hub" peer
 - Could run on Raspberry Pi!
 
----
+<!-- end_slide -->
 
 # Future Work: Other TODOs
 
@@ -957,7 +957,7 @@ From the codebase:
 
 **Lots of room for contributions!**
 
----
+<!-- end_slide -->
 
 # Current Usage: Library-Only
 
@@ -983,7 +983,7 @@ fn main() {
 
 **CLI exists but is minimal** (basic CRUD only)
 
----
+<!-- end_slide -->
 
 # Getting Started
 
@@ -1006,7 +1006,7 @@ libshizen = { git = "https://github.com/brandonpollack23/shizen", commit = "..."
 
 not on crates.io yet
 
----
+<!-- end_slide -->
 
 # Architecture Philosophy
 
@@ -1024,7 +1024,7 @@ not on crates.io yet
 - Git (operation log, merge strategies)
 - SQLite (embedded, reliable, simple)
 
----
+<!-- end_slide -->
 
 # Contributing
 
@@ -1042,7 +1042,7 @@ not on crates.io yet
 
 **First-time contributors welcome!**
 
----
+<!-- end_slide -->
 
 # Summary
 
@@ -1059,13 +1059,13 @@ not on crates.io yet
 
 **Status:** Library-complete, CLI working, other UIs TODO
 
----
+<!-- end_slide -->
 
 # Q&A
 
 **Questions?**
 
----
+<!-- end_slide -->
 
 # Thank You!
 
@@ -1118,4 +1118,4 @@ Email:
 
 Please consider sponsoring TokyoRust.org!
 
----
+<!-- end_slide -->
